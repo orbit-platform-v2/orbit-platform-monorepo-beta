@@ -42,13 +42,10 @@ resource "google_cloudbuild_trigger" "deploy_trigger" {
   name     = "${var.cluster_name}-deploy"
   filename = "cloudbuild.yaml"
 
-  github {
-    owner = "your-github-org"  # Update this
-    name  = "orbit-competition-monorepo-v2"
-    push {
-      branch = "^main$"
-    }
-  }
+github {
+  owner = "orbit-platform-v2"
+  name  = "orbit-platform-monorepo-v1"  # Your actual repo name
+}
 
   substitutions = {
     _CLUSTER_NAME = var.cluster_name
