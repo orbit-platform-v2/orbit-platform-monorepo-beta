@@ -1,12 +1,8 @@
-# Terraform Backend Configuration
-# Uncomment and configure for remote state storage
-
-# terraform {
-#   backend "gcs" {
-#     bucket = "your-terraform-state-bucket"
-#     prefix = "orbit-challenge-platform/terraform/state"
-#   }
-# }
-
-# For local development, state will be stored locally
-# For production, uncomment the GCS backend above
+# The backend.tf file should already be configured, but verify:
+# filepath: infrastructure/terraform/backend.tf
+terraform {
+  backend "gcs" {
+    bucket = "smart-pipeline-terraform-state"
+    prefix = "terraform/state"
+  }
+}
