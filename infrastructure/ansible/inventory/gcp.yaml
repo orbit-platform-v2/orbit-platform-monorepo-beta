@@ -1,0 +1,43 @@
+# Ansible inventory for GCP
+# This file defines the inventory for Ansible playbooks
+
+[local]
+localhost ansible_connection=local
+
+[gcp:vars]
+# GCP configuration variables
+ansible_python_interpreter=python3
+ansible_host_key_checking=False
+
+# Project configuration
+project_id={{ project_id }}
+region={{ region | default('us-central1') }}
+cluster_name={{ cluster_name | default('orbit-challenge-cluster') }}
+environment={{ environment | default('dev') }}
+
+# Tool versions
+kubectl_version=v1.28.0
+helm_version=v3.13.0
+
+# Feature flags
+enable_monitoring=true
+enable_network_policy=true
+enable_rbac=true
+
+# Resource limits
+max_pods_per_node=30
+max_nodes=10
+
+# Security settings
+enable_private_nodes=true
+enable_network_policy=true
+enable_pod_security_policy=false
+enable_binary_authorization=false
+
+# Monitoring settings
+prometheus_retention=15d
+grafana_admin_password=admin123
+
+# Backup settings
+backup_retention_days=7
+backup_schedule="0 2 * * *"

@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orbit-backend
+  namespace: orbit-system
+  labels:
+    app: orbit-backend
+    component: backend
+spec:
+  replicas: 2  # 2 replicas for high availability
+  selector:
+    matchLabels:
+      app: orbit-backend
+  template:
+    metadata:
+      labels:
+        app: orbit-backend
+        component: backend
+    spec:
+      tolerations:
+        - key: node-role
+          value: system
+          effect: NoSchedule
+      nodeSelector:
+        role: system
+      containers:
+      - name: backend
+        image: gcr.io/PROJECT_ID/orbit-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 500m      # Optimized for FastAPI workload (2.5 RPS normal, 7.5 RPS peak)
+            memory: 512Mi  # 512MB per replica for database connections and caching
+          requests:
+            cpu: 200m      # Ensures proper scheduling and QoS
+            memory: 256Mi  # Baseline memory requirement
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: orbit-secrets
+              key: database-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: orbit-secrets
+              key: jwt-secret
+        - name: OPERATOR_SERVICE_URL
+          value: "http://orbit-operator:8080"
+        - name: WEBSOCKET_ROUTER_URL
+          value: "ws://websocket-router:8080"
+        - name: MAX_CONCURRENT_SESSIONS
+          value: "50"
+        - name: DEFAULT_SESSION_TTL
+          value: "1800"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orbit-backend
+  namespace: orbit-system
+  labels:
+    app: orbit-backend
+    component: backend
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+    protocol: TCP
+  selector:
+    app: orbit-backend
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: orbit-backend-hpa
+  namespace: orbit-system
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: orbit-backend
+  minReplicas: 2
+  maxReplicas: 4  # Scale up to 4 replicas under load
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

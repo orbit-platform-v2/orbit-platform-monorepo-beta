@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orbit-operator
+  namespace: orbit-system
+  labels:
+    app: orbit-operator
+    component: operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orbit-operator
+  template:
+    metadata:
+      labels:
+        app: orbit-operator
+        component: operator
+    spec:
+      serviceAccountName: orbit-operator
+      tolerations:
+        - key: node-role
+          value: system
+          effect: NoSchedule
+      nodeSelector:
+        role: system
+      containers:
+      - name: manager
+        image: gcr.io/PROJECT_ID/orbit-operator:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - /manager
+        args:
+        - --leader-elect
+        - --metrics-bind-addr=:8080
+        - --health-probe-bind-addr=:8081
+        ports:
+        - containerPort: 8080
+          name: metrics
+          protocol: TCP
+        - containerPort: 8081
+          name: health
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 300m      # Optimized for API operations and pod management
+            memory: 256Mi  # 256MB sufficient for CRD operations
+          requests:
+            cpu: 100m      # Conservative request for scheduling
+            memory: 128Mi  # Minimum memory for operator
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        env:
+        - name: MAX_CHALLENGE_PODS
+          value: "50"
+        - name: DEFAULT_POD_TTL
+          value: "1800"
+        - name: CHALLENGE_NAMESPACE
+          value: "orbit-challenges"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
+          capabilities:
+            drop:
+            - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orbit-operator-metrics
+  namespace: orbit-system
+  labels:
+    app: orbit-operator
+    component: operator
+spec:
+  ports:
+  - name: metrics
+    port: 8080
+    targetPort: metrics
+  selector:
+    app: orbit-operator

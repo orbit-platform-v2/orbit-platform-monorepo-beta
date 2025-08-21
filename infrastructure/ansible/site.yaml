@@ -1,0 +1,293 @@
+---
+# Ansible playbook for configuring the Orbit Challenge Platform GKE cluster
+# This playbook sets up the cluster with necessary tools and configurations
+
+- name: Configure Orbit Challenge Platform GKE Cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    cluster_name: "{{ cluster_name | default('orbit-challenge-cluster') }}"
+    project_id: "{{ project_id }}"
+    region: "{{ region | default('us-central1') }}"
+    environment: "{{ environment | default('dev') }}"
+
+  tasks:
+    - name: Ensure required tools are installed
+      block:
+        - name: Check if kubectl is installed
+          command: kubectl version --client
+          register: kubectl_check
+          ignore_errors: true
+
+        - name: Install kubectl (if not present)
+          get_url:
+            url: "https://dl.k8s.io/release/{{ kubectl_version | default('v1.28.0') }}/bin/linux/amd64/kubectl"
+            dest: /usr/local/bin/kubectl
+            mode: '0755'
+          when: kubectl_check.rc != 0
+          become: true
+
+        - name: Check if helm is installed
+          command: helm version
+          register: helm_check
+          ignore_errors: true
+
+        - name: Install Helm (if not present)
+          shell: |
+            curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          when: helm_check.rc != 0
+          become: true
+
+    - name: Configure kubectl for GKE cluster
+      shell: |
+        gcloud container clusters get-credentials {{ cluster_name }} \
+          --region {{ region }} \
+          --project {{ project_id }}
+      register: kubectl_config
+
+    - name: Create namespaces
+      k8s:
+        name: "{{ item }}"
+        api_version: v1
+        kind: Namespace
+        state: present
+        definition:
+          metadata:
+            labels:
+              name: "{{ item }}"
+              environment: "{{ environment }}"
+              managed-by: "orbit-platform"
+      loop:
+        - orbit-system
+        - orbit-challenges
+        - orbit-monitoring
+        - team-alpha
+        - team-beta
+        - team-gamma
+
+    - name: Install cert-manager
+      shell: |
+        kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+      register: cert_manager_install
+
+    - name: Wait for cert-manager to be ready
+      shell: |
+        kubectl wait --for=condition=available --timeout=600s deployment/cert-manager -n cert-manager
+        kubectl wait --for=condition=available --timeout=600s deployment/cert-manager-cainjector -n cert-manager
+        kubectl wait --for=condition=available --timeout=600s deployment/cert-manager-webhook -n cert-manager
+
+    - name: Install NGINX Ingress Controller
+      shell: |
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.2/deploy/static/provider/cloud/deploy.yaml
+      register: nginx_install
+
+    - name: Wait for NGINX Ingress to be ready
+      shell: |
+        kubectl wait --namespace ingress-nginx \
+          --for=condition=ready pod \
+          --selector=app.kubernetes.io/component=controller \
+          --timeout=120s
+
+    - name: Install Prometheus Operator (if monitoring enabled)
+      shell: |
+        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+        helm repo update
+        helm install prometheus prometheus-community/kube-prometheus-stack \
+          --namespace orbit-monitoring \
+          --create-namespace \
+          --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false \
+          --set grafana.adminPassword=admin123
+      when: enable_monitoring | default(true)
+
+    - name: Apply Network Policies
+      k8s:
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: "{{ item.name }}"
+            namespace: "{{ item.namespace }}"
+          spec: "{{ item.spec }}"
+        state: present
+      loop:
+        - name: default-deny-all
+          namespace: orbit-challenges
+          spec:
+            podSelector: {}
+            policyTypes:
+              - Ingress
+              - Egress
+        - name: allow-same-namespace
+          namespace: orbit-challenges
+          spec:
+            podSelector: {}
+            policyTypes:
+              - Ingress
+              - Egress
+            ingress:
+              - from:
+                  - namespaceSelector:
+                      matchLabels:
+                        name: orbit-challenges
+            egress:
+              - to:
+                  - namespaceSelector:
+                      matchLabels:
+                        name: orbit-challenges
+        - name: allow-dns
+          namespace: orbit-challenges
+          spec:
+            podSelector: {}
+            policyTypes:
+              - Egress
+            egress:
+              - to: []
+                ports:
+                  - protocol: UDP
+                    port: 53
+
+    - name: Create Resource Quotas for team namespaces
+      k8s:
+        definition:
+          apiVersion: v1
+          kind: ResourceQuota
+          metadata:
+            name: team-quota
+            namespace: "{{ item }}"
+          spec:
+            hard:
+              requests.cpu: "2"
+              requests.memory: 4Gi
+              limits.cpu: "4"
+              limits.memory: 8Gi
+              persistentvolumeclaims: "5"
+              pods: "10"
+        state: present
+      loop:
+        - team-alpha
+        - team-beta
+        - team-gamma
+
+    - name: Create PodDisruptionBudgets
+      k8s:
+        definition:
+          apiVersion: policy/v1
+          kind: PodDisruptionBudget
+          metadata:
+            name: "{{ item.name }}"
+            namespace: "{{ item.namespace }}"
+          spec:
+            minAvailable: "{{ item.min_available }}"
+            selector:
+              matchLabels: "{{ item.selector }}"
+        state: present
+      loop:
+        - name: backend-pdb
+          namespace: orbit-system
+          min_available: 1
+          selector:
+            app: orbit-backend
+        - name: websocket-router-pdb
+          namespace: orbit-system
+          min_available: 1
+          selector:
+            app: websocket-router
+
+    - name: Apply Priority Classes
+      k8s:
+        definition:
+          apiVersion: scheduling.k8s.io/v1
+          kind: PriorityClass
+          metadata:
+            name: "{{ item.name }}"
+          value: "{{ item.value }}"
+          globalDefault: "{{ item.global_default | default(false) }}"
+          description: "{{ item.description }}"
+        state: present
+      loop:
+        - name: orbit-system-critical
+          value: 1000
+          description: "Priority class for Orbit system components"
+        - name: orbit-challenge-high
+          value: 500
+          description: "Priority class for challenge pods"
+        - name: orbit-default
+          value: 100
+          global_default: true
+          description: "Default priority class for Orbit platform"
+
+    - name: Configure RBAC for Orbit Operator
+      k8s:
+        definition:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRole
+          metadata:
+            name: orbit-operator-role
+          rules:
+            - apiGroups: [""]
+              resources: ["pods", "services", "configmaps", "secrets"]
+              verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+            - apiGroups: ["apps"]
+              resources: ["deployments"]
+              verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+            - apiGroups: ["networking.k8s.io"]
+              resources: ["networkpolicies"]
+              verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+            - apiGroups: ["challenges.orbit.io"]
+              resources: ["challenges", "sessions"]
+              verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        state: present
+
+    - name: Create Service Account for Orbit Operator
+      k8s:
+        definition:
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: orbit-operator
+            namespace: orbit-system
+        state: present
+
+    - name: Bind ClusterRole to Service Account
+      k8s:
+        definition:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRoleBinding
+          metadata:
+            name: orbit-operator-binding
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: orbit-operator-role
+          subjects:
+            - kind: ServiceAccount
+              name: orbit-operator
+              namespace: orbit-system
+        state: present
+
+    - name: Display cluster information
+      debug:
+        msg: |
+          GKE Cluster Configuration Complete!
+          
+          Cluster: {{ cluster_name }}
+          Region: {{ region }}
+          
+          Namespaces created:
+          - orbit-system (for platform components)
+          - orbit-challenges (for challenge pods)
+          - orbit-monitoring (for monitoring stack)
+          - team-alpha, team-beta, team-gamma (for team workspaces)
+          
+          Next steps:
+          1. Deploy the Orbit Operator to orbit-system namespace
+          2. Deploy the WebSocket Router to orbit-system namespace
+          3. Deploy the Backend API to orbit-system namespace
+          4. Configure ingress for external access
+          
+          Useful commands:
+          kubectl get nodes
+          kubectl get namespaces
+          kubectl get pods -n orbit-system
+          kubectl get ingress -n orbit-system

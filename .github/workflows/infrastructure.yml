@@ -1,0 +1,316 @@
+name: Infrastructure Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'infrastructure/**'
+      - 'k8s-manifests/**'
+      - 'scripts/**'
+      - '.github/workflows/infrastructure.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'infrastructure/**'
+      - 'k8s-manifests/**'
+      - 'scripts/**'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+          - plan
+          - apply
+          - pause
+          - resume
+          - destroy
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+env:
+  TF_VERSION: '1.5.0'
+  KUBECTL_VERSION: '1.28.0'
+  GCP_REGION: 'us-central1'
+  CLUSTER_NAME: 'orbit-challenge-cluster'
+
+jobs:
+  terraform-plan:
+    name: 'Terraform Plan'
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan')
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+        working-directory: infrastructure/terraform
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=terraform/state/${{ github.event.inputs.environment || 'dev' }}"
+        working-directory: infrastructure/terraform
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: infrastructure/terraform
+
+      - name: Terraform Plan
+        run: |
+          terraform plan \
+            -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
+            -var="region=${{ env.GCP_REGION }}" \
+            -var="environment=${{ github.event.inputs.environment || 'dev' }}" \
+            -out=tfplan
+        working-directory: infrastructure/terraform
+
+      - name: Save Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ github.event.inputs.environment || 'dev' }}
+          path: infrastructure/terraform/tfplan
+
+  terraform-apply:
+    name: 'Terraform Apply'
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+    if: |
+      (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    
+    outputs:
+      cluster_endpoint: ${{ steps.outputs.outputs.cluster_endpoint }}
+      cluster_ca_certificate: ${{ steps.outputs.outputs.cluster_ca_certificate }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=terraform/state/${{ github.event.inputs.environment || 'dev' }}"
+        working-directory: infrastructure/terraform
+
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-${{ github.event.inputs.environment || 'dev' }}
+          path: infrastructure/terraform
+        continue-on-error: true
+
+      - name: Terraform Apply
+        run: |
+          if [ -f tfplan ]; then
+            terraform apply tfplan
+          else
+            terraform apply -auto-approve \
+              -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
+              -var="region=${{ env.GCP_REGION }}" \
+              -var="environment=${{ github.event.inputs.environment || 'dev' }}"
+          fi
+        working-directory: infrastructure/terraform
+
+      - name: Get Terraform Outputs
+        id: outputs
+        run: |
+          echo "cluster_endpoint=$(terraform output -raw cluster_endpoint)" >> $GITHUB_OUTPUT
+          echo "cluster_ca_certificate=$(terraform output -raw cluster_ca_certificate)" >> $GITHUB_OUTPUT
+        working-directory: infrastructure/terraform
+
+  k8s-deploy:
+    name: 'Deploy Kubernetes Manifests'
+    runs-on: ubuntu-latest
+    needs: terraform-apply
+    if: |
+      (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Get GKE Credentials
+        run: |
+          gcloud container clusters get-credentials ${{ env.CLUSTER_NAME }} \
+            --region=${{ env.GCP_REGION }} \
+            --project=${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Apply Namespace and RBAC
+        run: |
+          kubectl apply -f k8s-manifests/base/namespace.yaml
+          kubectl apply -f k8s-manifests/base/rbac.yaml
+
+      - name: Apply Resource Constraints
+        run: |
+          kubectl apply -f k8s-manifests/base/challenge-resources.yaml
+
+      - name: Deploy System Pods
+        run: |
+          kubectl apply -f k8s-manifests/base/operator.yaml
+          kubectl apply -f k8s-manifests/base/backend.yaml
+          kubectl apply -f k8s-manifests/base/websocket-router.yaml
+
+      - name: Wait for Deployments
+        run: |
+          kubectl wait --for=condition=available --timeout=300s deployment/orbit-operator -n orbit-system
+          kubectl wait --for=condition=available --timeout=300s deployment/orbit-backend -n orbit-system
+          kubectl wait --for=condition=available --timeout=300s deployment/websocket-router -n orbit-system
+
+      - name: Validate Resource Allocation
+        run: |
+          chmod +x scripts/validate-cpu-allocation.sh
+          ./scripts/validate-cpu-allocation.sh
+
+      - name: Deploy Monitoring
+        run: |
+          kubectl apply -f k8s-manifests/monitoring/
+        continue-on-error: true
+
+  infrastructure-pause:
+    name: 'Pause Infrastructure'
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'pause'
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Pause Infrastructure
+        run: |
+          chmod +x scripts/pause-infrastructure.sh
+          ./scripts/pause-infrastructure.sh \
+            --project-id "${{ secrets.GCP_PROJECT_ID }}" \
+            --region "${{ env.GCP_REGION }}" \
+            --cluster-name "${{ env.CLUSTER_NAME }}"
+
+  infrastructure-resume:
+    name: 'Resume Infrastructure'
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'resume'
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resume Infrastructure
+        run: |
+          chmod +x scripts/resume-infrastructure.sh
+          ./scripts/resume-infrastructure.sh \
+            --project-id "${{ secrets.GCP_PROJECT_ID }}" \
+            --region "${{ env.GCP_REGION }}" \
+            --cluster-name "${{ env.CLUSTER_NAME }}"
+
+  infrastructure-destroy:
+    name: 'Destroy Infrastructure'
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=terraform/state/${{ github.event.inputs.environment || 'dev' }}"
+        working-directory: infrastructure/terraform
+
+      - name: Terraform Destroy
+        run: |
+          terraform destroy -auto-approve \
+            -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
+            -var="region=${{ env.GCP_REGION }}" \
+            -var="environment=${{ github.event.inputs.environment || 'dev' }}"
+        working-directory: infrastructure/terraform

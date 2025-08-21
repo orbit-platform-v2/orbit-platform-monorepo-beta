@@ -1,0 +1,203 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: challenge-pod-template
+  namespace: orbit-challenges
+  labels:
+    component: challenge-pod
+    challenge: template
+    managed-by: orbit-operator
+spec:
+  restartPolicy: Never
+  priorityClassName: challenge-priority
+  terminationGracePeriodSeconds: 30
+  
+  # Ensure pods are scheduled on challenge nodes only
+  nodeSelector:
+    role: challenge
+  
+  # Pod-level resource constraints
+  containers:
+  - name: challenge
+    image: ubuntu:22.04  # Base image - will be overridden by specific challenges
+    
+    # EXACT CPU SPECIFICATION: 0.5 CPU limit as requested
+    resources:
+      limits:
+        cpu: "500m"      # Exactly 0.5 CPU per pod
+        memory: "1Gi"    # 1GB memory limit
+        ephemeral-storage: "5Gi"
+      requests:
+        cpu: "200m"      # 0.2 CPU request for scheduling
+        memory: "256Mi"  # 256MB memory request
+        ephemeral-storage: "1Gi"
+    
+    # Security context
+    securityContext:
+      runAsNonRoot: false  # Some challenges may need root
+      allowPrivilegeEscalation: true  # For Docker-in-Docker challenges
+      capabilities:
+        add:
+        - SYS_ADMIN  # Required for some DevOps tools
+        drop:
+        - NET_RAW
+    
+    # Environment variables
+    env:
+    - name: CHALLENGE_USER
+      value: "challenger"
+    - name: CHALLENGE_HOME
+      value: "/home/challenger"
+    - name: TERM
+      value: "xterm-256color"
+    - name: SHELL
+      value: "/bin/bash"
+    
+    # Ports for services (SSH, HTTP, etc.)
+    ports:
+    - containerPort: 22
+      name: ssh
+      protocol: TCP
+    - containerPort: 8080
+      name: http
+      protocol: TCP
+    - containerPort: 3000
+      name: app
+      protocol: TCP
+    
+    # Health checks
+    livenessProbe:
+      exec:
+        command:
+        - /bin/sh
+        - -c
+        - "pgrep -f sshd || exit 1"
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+    
+    readinessProbe:
+      tcpSocket:
+        port: 22
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+    
+    # Volume mounts
+    volumeMounts:
+    - name: challenge-workspace
+      mountPath: /workspace
+    - name: tmp
+      mountPath: /tmp
+    - name: var-run
+      mountPath: /var/run
+    
+  # Volumes
+  volumes:
+  - name: challenge-workspace
+    emptyDir:
+      sizeLimit: 5Gi
+  - name: tmp
+    emptyDir:
+      sizeLimit: 1Gi
+  - name: var-run
+    emptyDir:
+      sizeLimit: 100Mi
+  
+  # DNS configuration
+  dnsPolicy: ClusterFirst
+  dnsConfig:
+    options:
+    - name: ndots
+      value: "2"
+    - name: edns0
+---
+# Example Session CRD that creates challenge pods with exact specifications
+apiVersion: challenges.orbit.io/v1
+kind: Session
+metadata:
+  name: user-123-docker-basics
+  namespace: orbit-challenges
+  labels:
+    userId: "user-123"
+    challengeName: "docker-basics"
+    component: challenge-session
+spec:
+  challengeName: "docker-basics"
+  userId: "user-123"
+  userName: "john-doe"
+  teamId: "team-alpha"
+  ttlSecondsAfterCreation: 1800  # 30 minutes
+  timeoutSeconds: 1800
+  
+  # Resource specification - exactly 0.5 CPU as requested
+  resources:
+    cpu: "500m"      # Exactly 0.5 CPU limit
+    memory: "1Gi"    # 1GB memory
+    storage: "5Gi"   # 5GB ephemeral storage
+  
+  environment:
+  - name: USER_ID
+    value: "user-123"
+  - name: CHALLENGE_TYPE
+    value: "docker-basics"
+  - name: SESSION_ID
+    value: "user-123-docker-basics"
+---
+# Pod Monitor for Prometheus scraping
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: challenge-pods
+  namespace: orbit-challenges
+spec:
+  selector:
+    matchLabels:
+      component: challenge-pod
+  podMetricsEndpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+---
+# Service Monitor for challenge pod metrics
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: challenge-pod-metrics
+  namespace: orbit-challenges
+data:
+  metrics-config.yaml: |
+    # Metrics collection configuration for challenge pods
+    metrics:
+      cpu_usage:
+        enabled: true
+        interval: 30s
+      memory_usage:
+        enabled: true
+        interval: 30s
+      network_io:
+        enabled: true
+        interval: 60s
+      disk_io:
+        enabled: true
+        interval: 60s
+    
+    # Resource utilization thresholds
+    thresholds:
+      cpu_limit_percentage: 80
+      memory_limit_percentage: 85
+      disk_usage_percentage: 90
+    
+    # Alerting rules
+    alerts:
+      cpu_throttling:
+        enabled: true
+        threshold: 0.1  # 10% throttling
+      memory_pressure:
+        enabled: true
+        threshold: 0.9  # 90% memory usage
+      pod_restart:
+        enabled: true
+        threshold: 1    # Any restart

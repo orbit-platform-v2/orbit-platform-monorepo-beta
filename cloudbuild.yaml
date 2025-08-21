@@ -1,0 +1,194 @@
+steps:
+  # Step 1: Install tools
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'setup'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "Setting up tools..."
+        gcloud components install kubectl
+        gcloud config set project $PROJECT_ID
+
+  # Step 2: Terraform Init
+  - name: 'hashicorp/terraform:1.5'
+    id: 'terraform-init'
+    dir: 'infrastructure/terraform'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        terraform init \
+          -backend-config="bucket=${_TF_STATE_BUCKET}" \
+          -backend-config="prefix=terraform/state/${_ENVIRONMENT}"
+
+  # Step 3: Terraform Plan
+  - name: 'hashicorp/terraform:1.5'
+    id: 'terraform-plan'
+    dir: 'infrastructure/terraform'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        terraform plan \
+          -var="project_id=$PROJECT_ID" \
+          -var="region=${_REGION}" \
+          -var="environment=${_ENVIRONMENT}" \
+          -out=tfplan
+
+  # Step 4: Terraform Apply (only on main branch)
+  - name: 'hashicorp/terraform:1.5'
+    id: 'terraform-apply'
+    dir: 'infrastructure/terraform'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        if [ "$BRANCH_NAME" = "main" ] || [ "$_ACTION" = "apply" ]; then
+          terraform apply -auto-approve tfplan
+        else
+          echo "Skipping apply for branch: $BRANCH_NAME"
+        fi
+
+  # Step 5: Get cluster credentials
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'get-credentials'
+    args:
+      - 'container'
+      - 'clusters'
+      - 'get-credentials'
+      - '${_CLUSTER_NAME}'
+      - '--region=${_REGION}'
+
+  # Step 6: Deploy Kubernetes manifests
+  - name: 'gcr.io/cloud-builders/kubectl'
+    id: 'deploy-k8s'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if [ "$BRANCH_NAME" = "main" ] || [ "$_ACTION" = "apply" ]; then
+          echo "Deploying Kubernetes manifests..."
+          
+          # Apply namespaces and RBAC
+          kubectl apply -f k8s-manifests/base/namespace.yaml
+          kubectl apply -f k8s-manifests/base/rbac.yaml
+          
+          # Apply resource constraints
+          kubectl apply -f k8s-manifests/base/challenge-resources.yaml
+          
+          # Deploy system components
+          kubectl apply -f k8s-manifests/base/operator.yaml
+          kubectl apply -f k8s-manifests/base/backend.yaml
+          kubectl apply -f k8s-manifests/base/websocket-router.yaml
+          
+          # Wait for deployments
+          kubectl wait --for=condition=available --timeout=300s deployment/orbit-operator -n orbit-system
+          kubectl wait --for=condition=available --timeout=300s deployment/orbit-backend -n orbit-system
+          kubectl wait --for=condition=available --timeout=300s deployment/websocket-router -n orbit-system
+          
+          echo "Deployment completed successfully"
+        else
+          echo "Skipping deployment for branch: $BRANCH_NAME"
+        fi
+
+  # Step 7: Validate deployment
+  - name: 'gcr.io/cloud-builders/kubectl'
+    id: 'validate'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if [ "$BRANCH_NAME" = "main" ] || [ "$_ACTION" = "apply" ]; then
+          echo "Validating deployment..."
+          
+          # Run validation script
+          chmod +x scripts/validate-cpu-allocation.sh
+          ./scripts/validate-cpu-allocation.sh
+          
+          # Check pod status
+          kubectl get pods --all-namespaces
+          kubectl get nodes -o wide
+          
+          echo "Validation completed"
+        fi
+
+  # Step 8: Pause infrastructure (manual trigger only)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'pause-infrastructure'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if [ "$_ACTION" = "pause" ]; then
+          echo "Pausing infrastructure..."
+          chmod +x scripts/pause-infrastructure.sh
+          ./scripts/pause-infrastructure.sh \
+            --project-id $PROJECT_ID \
+            --region ${_REGION} \
+            --cluster-name ${_CLUSTER_NAME} \
+            --force
+        else
+          echo "Skipping pause action"
+        fi
+
+  # Step 9: Resume infrastructure (manual trigger only)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'resume-infrastructure'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if [ "$_ACTION" = "resume" ]; then
+          echo "Resuming infrastructure..."
+          chmod +x scripts/resume-infrastructure.sh
+          ./scripts/resume-infrastructure.sh \
+            --project-id $PROJECT_ID \
+            --region ${_REGION} \
+            --cluster-name ${_CLUSTER_NAME} \
+            --force
+        else
+          echo "Skipping resume action"
+        fi
+
+  # Step 10: Destroy infrastructure (manual trigger only)
+  - name: 'hashicorp/terraform:1.5'
+    id: 'terraform-destroy'
+    dir: 'infrastructure/terraform'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        if [ "$_ACTION" = "destroy" ]; then
+          echo "Destroying infrastructure..."
+          terraform destroy -auto-approve \
+            -var="project_id=$PROJECT_ID" \
+            -var="region=${_REGION}" \
+            -var="environment=${_ENVIRONMENT}"
+        else
+          echo "Skipping destroy action"
+        fi
+
+# Substitutions for configurable values
+substitutions:
+  _REGION: 'us-central1'
+  _ENVIRONMENT: 'dev'
+  _CLUSTER_NAME: 'orbit-challenge-cluster'
+  _TF_STATE_BUCKET: '${PROJECT_ID}-terraform-state'
+  _ACTION: 'plan'  # Options: plan, apply, pause, resume, destroy
+
+# Build options
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'
+  substitutionOption: 'ALLOW_LOOSE'
+
+# Timeout for the entire build
+timeout: '1800s'  # 30 minutes
+
+# Tags for organizing builds
+tags:
+  - 'infrastructure'
+  - 'orbit-platform'
+  - 'terraform'
+  - 'kubernetes'

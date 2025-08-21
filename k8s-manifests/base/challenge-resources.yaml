@@ -1,0 +1,131 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: challenge-quota
+  namespace: orbit-challenges
+spec:
+  hard:
+    # Limit total CPU usage for challenge pods
+    # 50 pods × 0.2 CPU request = 10 CPU request
+    # 50 pods × 0.5 CPU limit = 25 CPU limit
+    requests.cpu: "10"
+    limits.cpu: "25"
+    
+    # Limit total memory usage for challenge pods
+    # 50 pods × 256Mi request = 12.5Gi request
+    # 50 pods × 1Gi limit = 50Gi limit
+    requests.memory: "12800Mi"  # 12.5Gi
+    limits.memory: "50Gi"
+    
+    # Limit number of pods
+    pods: "55"  # 50 challenge pods + 5 buffer for system pods
+    
+    # Limit persistent volume claims
+    persistentvolumeclaims: "10"
+    
+    # Limit services and other resources
+    services: "5"
+    configmaps: "20"
+    secrets: "10"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: challenge-limits
+  namespace: orbit-challenges
+spec:
+  limits:
+  - type: Pod
+    max:
+      cpu: "1"      # Max 1 CPU per pod
+      memory: "2Gi"  # Max 2Gi memory per pod
+    min:
+      cpu: "50m"    # Min 50 millicores
+      memory: "64Mi" # Min 64Mi memory
+  - type: Container
+    default:
+      cpu: "500m"    # Default CPU limit: exactly 0.5 CPU as requested
+      memory: "1Gi"   # Default memory limit for challenge containers
+    defaultRequest:
+      cpu: "200m"     # Default CPU request: 40% of limit for good scheduling
+      memory: "256Mi" # Default memory request: 25% of limit
+    max:
+      cpu: "500m"     # Max CPU per container: enforce 0.5 CPU limit
+      memory: "1Gi"   # Max memory per container
+    min:
+      cpu: "50m"      # Min CPU per container
+      memory: "64Mi"  # Min memory per container
+  - type: PersistentVolumeClaim
+    max:
+      storage: "10Gi" # Max storage per PVC
+    min:
+      storage: "1Gi"  # Min storage per PVC
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: challenge-pod-isolation
+  namespace: orbit-challenges
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from WebSocket router pods
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: orbit-system
+    - podSelector:
+        matchLabels:
+          app: websocket-router
+    ports:
+    - protocol: TCP
+      port: 22    # SSH access
+    - protocol: TCP
+      port: 8080  # HTTP access for web-based challenges
+  # Allow ingress from same namespace (for team collaboration)
+  - from:
+    - podSelector: {}
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow outbound internet (controlled by Cloud NAT)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 80   # HTTP
+    - protocol: TCP
+      port: 443  # HTTPS
+    - protocol: TCP
+      port: 22   # SSH (for git operations)
+    - protocol: TCP
+      port: 3389 # RDP (if needed for Windows challenges)
+  # Allow communication within namespace
+  - to:
+    - podSelector: {}
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: challenge-priority
+value: 500
+globalDefault: false
+description: "Priority class for challenge pods"
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: challenge-pdb
+  namespace: orbit-challenges
+spec:
+  minAvailable: 40  # Keep at least 40 out of 50 challenge pods available during disruptions
+  selector:
+    matchLabels:
+      component: challenge-pod
