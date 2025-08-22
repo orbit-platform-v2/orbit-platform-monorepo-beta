@@ -21,7 +21,7 @@ A scalable DevOps challenge platform with ephemeral pods, embedded terminals, We
 |-----------|------------|
 | **Infrastructure** | GKE (private), Cloud NAT, Load Balancer, Container Registry |
 | **Provisioning** | Terraform + Ansible |
-| **Backend** | FastAPI (Python) |
+| **Backend** | NESTJS typescript |
 | **Frontend** | React + xterm.js |
 | **Operator** | Go (Kubebuilder) |
 | **Router** | WebSocket router (Go) |
