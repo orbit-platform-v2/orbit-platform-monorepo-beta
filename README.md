@@ -4,37 +4,7 @@ A scalable DevOps challenge platform with ephemeral pods, embedded terminals, We
 
 ## 🏗️ Architecture Overview
 
-```mermaid
-flowchart TB
-    subgraph Internet["Internet"]
-        FE["Frontend Browser/WebApp"]
-    end
-    subgraph IngressLayer["Gateway API + HTTPRoute"]
-        GW["Gateway / LoadBalancer"]
-    end
-    subgraph Services["Services"]
-        BE["Backend Service Auth, Challenge selection"]
-        OP["Challenge Operator Controller"]
-        WS["WebSocket Router Service"]
-    end
-    subgraph Pods["Pods"]
-        BEP1["Backend Pod 1"]
-        BEP2["Backend Pod 2"]
-        CH1["Challenge Pod A"]
-        CH2["Challenge Pod B"]
-    end
-    subgraph K8sCluster["Kubernetes Cluster"]
-        IngressLayer
-        Services
-        Pods
-    end
-    FE -- HTTPS Request --> GW
-    GW --> BE
-    BE -- Request challenge type --> OP
-    OP -- Creates pod --> CH1 & CH2
-    FE <-- WebSocket Connection --> WS
-    WS <-- Forward traffic --> CH1 & CH2
-```
+<img width="1076" height="317" alt="image" src="https://github.com/user-attachments/assets/e544bc3e-cec9-4b83-9710-46fa3fd87ef7" />
 
 ## 🚀 Features
 
