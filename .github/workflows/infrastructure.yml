@@ -49,6 +49,27 @@ env:
   ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
 
 jobs:
+  workflow-info:
+    name: 'Workflow Information'
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    
+    steps:
+      - name: Workflow Triggered
+        run: |
+          echo "🚀 Infrastructure Pipeline Workflow Updated!"
+          echo "Trigger: ${{ github.event_name }}"
+          echo "Branch: ${{ github.ref }}"
+          echo "Commit: ${{ github.sha }}"
+          echo ""
+          echo "ℹ️  To run infrastructure operations:"
+          echo "1. Go to Actions tab"
+          echo "2. Click 'Infrastructure Pipeline'"
+          echo "3. Click 'Run workflow'"
+          echo "4. Select action (validate-setup, plan, apply, etc.)"
+          echo ""
+          echo "🔗 Direct link: https://github.com/${{ github.repository }}/actions/workflows/infrastructure.yml"
+
   validate-setup:
     name: 'Validate GCP Setup & Service Account'
     runs-on: ubuntu-latest
@@ -71,17 +92,17 @@ jobs:
         run: |
           echo "🔍 Verifying GitHub secrets configuration..."
           
-          if [ -n "${{ secrets.GCP_PROJECT_ID }}" ]; then
-            echo "✅ GCP_PROJECT_ID is set: ${{ secrets.GCP_PROJECT_ID }}"
+          if [[ -n "$GCP_PROJECT_ID" ]]; then
+            echo "✅ GCP_PROJECT_ID is set: $GCP_PROJECT_ID"
           else
             echo "❌ GCP_PROJECT_ID is not set"
             exit 1
           fi
           
-          if [ -n "${{ secrets.GCP_SA_KEY }}" ]; then
-            echo "✅ GCP_SA_KEY is set"
+          if [[ -n "$GCP_SA_KEY" ]]; then
+            echo "✅ GCP_SA_KEY is set (length: ${#GCP_SA_KEY} characters)"
             # Parse and show non-sensitive info from the key
-            echo '${{ secrets.GCP_SA_KEY }}' | jq -r '{
+            echo "$GCP_SA_KEY" | jq -r '{
               type,
               project_id,
               client_email,
@@ -94,12 +115,16 @@ jobs:
             exit 1
           fi
           
-          if [ -n "${{ secrets.TF_STATE_BUCKET }}" ]; then
-            echo "✅ TF_STATE_BUCKET is set: ${{ secrets.TF_STATE_BUCKET }}"
+          if [[ -n "$TF_STATE_BUCKET" ]]; then
+            echo "✅ TF_STATE_BUCKET is set: $TF_STATE_BUCKET"
           else
             echo "❌ TF_STATE_BUCKET is not set"
             exit 1
           fi
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
 
       - name: Get Current Service Account Info
         run: |
