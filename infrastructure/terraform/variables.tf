@@ -44,7 +44,7 @@ variable "max_concurrent_users" {
 variable "pod_ttl_seconds" {
   description = "TTL for challenge pods in seconds"
   type        = number
-  default     = 1800  # 30 minutes
+  default     = 1800 # 30 minutes
 }
 
 variable "enable_monitoring" {

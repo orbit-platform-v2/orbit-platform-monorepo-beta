@@ -42,10 +42,10 @@ resource "google_cloudbuild_trigger" "deploy_trigger" {
   name     = "${var.cluster_name}-deploy"
   filename = "cloudbuild.yaml"
 
-github {
-  owner = "orbit-platform-v2"
-  name  = "orbit-platform-monorepo-beta"  # Your actual repo name
-}
+  github {
+    owner = "orbit-platform-v2"
+    name  = "orbit-platform-monorepo-beta" # Your actual repo name
+  }
 
   substitutions = {
     _CLUSTER_NAME = var.cluster_name
@@ -95,11 +95,11 @@ resource "google_project_iam_member" "cloudbuild_roles" {
 
 # Monitoring workspace
 resource "google_monitoring_workspace" "workspace" {
-  count                      = var.enable_monitoring ? 1 : 0
-  provider                   = google-beta
-  workspace_id              = var.project_id
-  notification_channels     = []
-  
+  count                 = var.enable_monitoring ? 1 : 0
+  provider              = google-beta
+  workspace_id          = var.project_id
+  notification_channels = []
+
   labels = {
     environment = var.environment
   }
@@ -110,10 +110,10 @@ resource "google_logging_metric" "pod_creation_metric" {
   count  = var.enable_monitoring ? 1 : 0
   name   = "orbit_pod_creation_rate"
   filter = "resource.type=\"k8s_pod\" AND labels.\"k8s-pod/app\"=\"challenge-pod\""
-  
+
   metric_descriptor {
-    metric_kind = "GAUGE"
-    value_type  = "INT64"
+    metric_kind  = "GAUGE"
+    value_type   = "INT64"
     display_name = "Challenge Pod Creation Rate"
   }
 
@@ -128,7 +128,7 @@ resource "google_storage_bucket" "platform_storage" {
   location = var.region
 
   uniform_bucket_level_access = true
-  
+
   versioning {
     enabled = true
   }

@@ -44,7 +44,7 @@ resource "google_project_service" "required_apis" {
 
   service = each.value
   project = var.project_id
-  
+
   disable_dependent_services = false
   disable_on_destroy         = false
 }
@@ -53,7 +53,7 @@ resource "google_project_service" "required_apis" {
 resource "google_compute_network" "vpc" {
   name                    = "${var.cluster_name}-vpc"
   auto_create_subnetworks = false
-  routing_mode           = "REGIONAL"
+  routing_mode            = "REGIONAL"
 
   depends_on = [google_project_service.required_apis]
 }
@@ -88,9 +88,9 @@ resource "google_compute_router" "router" {
 
 resource "google_compute_router_nat" "nat" {
   name                               = "${var.cluster_name}-nat"
-  router                            = google_compute_router.router.name
-  region                            = var.region
-  nat_ip_allocate_option            = "AUTO_ONLY"
+  router                             = google_compute_router.router.name
+  region                             = var.region
+  nat_ip_allocate_option             = "AUTO_ONLY"
   source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
 
   log_config {
@@ -125,7 +125,7 @@ resource "google_compute_firewall" "allow_internal" {
 resource "google_container_cluster" "primary" {
   name     = var.cluster_name
   location = var.region
-  
+
   # Remove default node pool
   remove_default_node_pool = true
   initial_node_count       = 1
@@ -185,7 +185,7 @@ resource "google_container_cluster" "primary" {
 
   # Security settings
   enable_shielded_nodes = true
-  
+
   # Resource usage export
   resource_usage_export_config {
     enable_network_egress_metering = true
@@ -209,7 +209,7 @@ resource "google_container_node_pool" "system_nodes" {
 
   node_config {
     preemptible  = false
-    machine_type = "e2-standard-2"  # 2 vCPU, 8GB RAM per node
+    machine_type = "e2-standard-2" # 2 vCPU, 8GB RAM per node
 
     service_account = google_service_account.gke_nodes.email
     oauth_scopes = [
@@ -255,8 +255,8 @@ resource "google_container_node_pool" "challenge_nodes" {
   node_count = var.challenge_node_count
 
   node_config {
-    preemptible  = true  # Use preemptible for cost savings
-    machine_type = "e2-standard-4"  # 4 vCPU, 16GB RAM per node
+    preemptible  = true            # Use preemptible for cost savings
+    machine_type = "e2-standard-4" # 4 vCPU, 16GB RAM per node
 
     service_account = google_service_account.gke_nodes.email
     oauth_scopes = [
@@ -271,7 +271,7 @@ resource "google_container_node_pool" "challenge_nodes" {
     # Each node can handle ~5 challenge pods (4 vCPU / 0.5 CPU per pod = 8, but leave headroom)
     # 10 nodes × 5 pods = 50 challenge pods
     metadata = {
-      "max-pods-per-node" = "15"  # Allow extra pods for system overhead
+      "max-pods-per-node" = "15" # Allow extra pods for system overhead
     }
 
     workload_metadata_config {
@@ -286,7 +286,7 @@ resource "google_container_node_pool" "challenge_nodes" {
 
   autoscaling {
     min_node_count = var.challenge_node_count
-    max_node_count = var.challenge_node_count + 2  # Allow slight scaling
+    max_node_count = var.challenge_node_count + 2 # Allow slight scaling
   }
 
   management {
