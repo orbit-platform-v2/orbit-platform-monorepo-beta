@@ -332,7 +332,7 @@ jobs:
     if: |
       (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
-    environment: ${{ env.ENVIRONMENT }}
+    environment: ${{ github.event.inputs.environment || 'dev' }}
     
     outputs:
       cluster_endpoint: ${{ steps.outputs.outputs.cluster_endpoint }}
@@ -491,7 +491,7 @@ jobs:
     name: 'Pause Infrastructure'
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'pause'
-    environment: ${{ env.ENVIRONMENT }}
+    environment: ${{ github.event.inputs.environment || 'dev' }}
     
     steps:
       - name: Checkout
@@ -518,7 +518,7 @@ jobs:
     name: 'Resume Infrastructure'
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'resume'
-    environment: ${{ env.ENVIRONMENT }}
+    environment: ${{ github.event.inputs.environment || 'dev' }}
     
     steps:
       - name: Checkout
@@ -545,7 +545,7 @@ jobs:
     name: 'Destroy Infrastructure'
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
-    environment: ${{ env.ENVIRONMENT }}
+    environment: ${{ github.event.inputs.environment || 'dev' }}
     
     steps:
       - name: Checkout
