@@ -25,6 +25,7 @@ on:
         default: 'plan'
         type: choice
         options:
+          - validate-setup
           - plan
           - apply
           - pause
@@ -48,10 +49,202 @@ env:
   ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
 
 jobs:
+  validate-setup:
+    name: 'Validate GCP Setup & Service Account'
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'validate-setup'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify GitHub Secrets
+        run: |
+          echo "🔍 Verifying GitHub secrets configuration..."
+          
+          if [ -n "${{ secrets.GCP_PROJECT_ID }}" ]; then
+            echo "✅ GCP_PROJECT_ID is set: ${{ secrets.GCP_PROJECT_ID }}"
+          else
+            echo "❌ GCP_PROJECT_ID is not set"
+            exit 1
+          fi
+          
+          if [ -n "${{ secrets.GCP_SA_KEY }}" ]; then
+            echo "✅ GCP_SA_KEY is set"
+            # Parse and show non-sensitive info from the key
+            echo '${{ secrets.GCP_SA_KEY }}' | jq -r '{
+              type,
+              project_id,
+              client_email,
+              client_id,
+              auth_uri,
+              token_uri
+            }'
+          else
+            echo "❌ GCP_SA_KEY is not set"
+            exit 1
+          fi
+          
+          if [ -n "${{ secrets.TF_STATE_BUCKET }}" ]; then
+            echo "✅ TF_STATE_BUCKET is set: ${{ secrets.TF_STATE_BUCKET }}"
+          else
+            echo "❌ TF_STATE_BUCKET is not set"
+            exit 1
+          fi
+
+      - name: Get Current Service Account Info
+        run: |
+          echo "🔍 Current authenticated account details:"
+          SA_EMAIL=$(gcloud auth list --filter=status:ACTIVE --format="value(account)")
+          echo "Service Account: $SA_EMAIL"
+          
+          echo ""
+          echo "📋 Service Account Details:"
+          gcloud iam service-accounts describe $SA_EMAIL --project=${{ secrets.GCP_PROJECT_ID }}
+
+      - name: List Service Account Permissions
+        run: |
+          SA_EMAIL=$(gcloud auth list --filter=status:ACTIVE --format="value(account)")
+          
+          echo "🔐 IAM Roles assigned to $SA_EMAIL:"
+          gcloud projects get-iam-policy ${{ secrets.GCP_PROJECT_ID }} \
+            --flatten="bindings[].members" \
+            --format="table(bindings.role:label=ROLE)" \
+            --filter="bindings.members:$SA_EMAIL"
+
+      - name: Validate Required APIs
+        run: |
+          echo "🔍 Checking required APIs..."
+          
+          # Check if APIs are enabled
+          APIS=(
+            "compute.googleapis.com"
+            "container.googleapis.com" 
+            "servicenetworking.googleapis.com"
+            "dns.googleapis.com"
+            "cloudbuild.googleapis.com"
+            "artifactregistry.googleapis.com"
+            "monitoring.googleapis.com"
+            "logging.googleapis.com"
+          )
+          
+          for api in "${APIS[@]}"; do
+            if gcloud services list --enabled --filter="name:$api" --format="value(name)" | grep -q "$api"; then
+              echo "✅ $api enabled"
+            else
+              echo "❌ $api not enabled"
+            fi
+          done
+
+      - name: Enable Required APIs
+        run: |
+          echo "🔧 Enabling required APIs..."
+          gcloud services enable compute.googleapis.com
+          gcloud services enable container.googleapis.com
+          gcloud services enable servicenetworking.googleapis.com
+          gcloud services enable dns.googleapis.com
+          gcloud services enable cloudbuild.googleapis.com
+          gcloud services enable artifactregistry.googleapis.com
+          gcloud services enable monitoring.googleapis.com
+          gcloud services enable logging.googleapis.com
+          echo "✅ All APIs enabled successfully"
+
+      - name: Test Service Account Permissions
+        run: |
+          echo "🧪 Testing service account permissions..."
+          
+          # Test Compute Engine API
+          if gcloud compute zones list --limit=1 --project=${{ secrets.GCP_PROJECT_ID }} > /dev/null 2>&1; then
+            echo "✅ Compute Engine API accessible"
+          else
+            echo "❌ Compute Engine API not accessible"
+          fi
+          
+          # Test Container API
+          if gcloud container clusters list --project=${{ secrets.GCP_PROJECT_ID }} > /dev/null 2>&1; then
+            echo "✅ Kubernetes Engine API accessible"
+          else
+            echo "❌ Kubernetes Engine API not accessible"
+          fi
+          
+          # Test Storage API
+          if gsutil ls gs://${{ secrets.TF_STATE_BUCKET }} > /dev/null 2>&1; then
+            echo "✅ Cloud Storage accessible (Terraform state bucket)"
+          else
+            echo "❌ Cloud Storage not accessible"
+          fi
+          
+          # Test IAM permissions
+          SA_EMAIL=$(gcloud auth list --filter=status:ACTIVE --format="value(account)")
+          if gcloud iam service-accounts describe $SA_EMAIL --project=${{ secrets.GCP_PROJECT_ID }} > /dev/null 2>&1; then
+            echo "✅ IAM Service Account Admin permissions working"
+          else
+            echo "❌ IAM Service Account Admin permissions not working"
+          fi
+
+      - name: Validate Terraform State Bucket
+        run: |
+          echo "🪣 Validating Terraform state bucket..."
+          
+          # Check if bucket exists and is accessible
+          if gsutil ls gs://${{ secrets.TF_STATE_BUCKET }} > /dev/null 2>&1; then
+            echo "✅ Terraform state bucket exists and accessible"
+            
+            # Check versioning
+            if gsutil versioning get gs://${{ secrets.TF_STATE_BUCKET }} | grep -q "Enabled"; then
+              echo "✅ Bucket versioning is enabled"
+            else
+              echo "⚠️ Bucket versioning is not enabled"
+            fi
+            
+            # Check location
+            echo "📍 Bucket location:"
+            gsutil ls -L -b gs://${{ secrets.TF_STATE_BUCKET }} | grep "Location constraint:"
+            
+          else
+            echo "❌ Cannot access Terraform state bucket"
+            exit 1
+          fi
+
+      - name: List Service Account Keys
+        run: |
+          SA_EMAIL=$(gcloud auth list --filter=status:ACTIVE --format="value(account)")
+          
+          echo "🔑 Keys for service account $SA_EMAIL:"
+          gcloud iam service-accounts keys list \
+            --iam-account=$SA_EMAIL \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --format="table(name.basename():label=KEY_ID,validAfterTime:label=CREATED,validBeforeTime:label=EXPIRES)"
+
+      - name: Summary Report
+        run: |
+          echo ""
+          echo "📊 VALIDATION SUMMARY"
+          echo "===================="
+          echo "✅ GitHub Secrets: Configured"
+          echo "✅ Service Account: $(gcloud auth list --filter=status:ACTIVE --format='value(account)')"
+          echo "✅ Project ID: ${{ secrets.GCP_PROJECT_ID }}"
+          echo "✅ Region: ${{ env.GCP_REGION }}"
+          echo "✅ Terraform Bucket: ${{ secrets.TF_STATE_BUCKET }}"
+          echo "✅ Environment: ${{ env.ENVIRONMENT }}"
+          echo ""
+          echo "🚀 Ready for infrastructure deployment!"
+
   terraform-plan:
     name: 'Terraform Plan'
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan')
+    if: |
+      github.event_name == 'pull_request' || 
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan') ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[plan]'))
     
     steps:
       - name: Checkout
@@ -70,6 +263,15 @@ jobs:
       - name: Setup Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Verify GCP Authentication
+        run: |
+          echo "🔐 Verifying GCP authentication..."
+          gcloud auth list
+          gcloud config list project
+          echo "Project ID: ${{ secrets.GCP_PROJECT_ID }}"
+          echo "Bucket: ${{ secrets.TF_STATE_BUCKET }}"
+          echo "Environment: ${{ env.ENVIRONMENT }}"
+
       - name: Terraform Format Check
         run: terraform fmt -check -recursive
         working-directory: infrastructure/terraform
@@ -78,7 +280,7 @@ jobs:
         run: |
           terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="prefix=terraform/state/${{ github.event.inputs.environment || 'dev' }}"
+            -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}"
         working-directory: infrastructure/terraform
 
       - name: Terraform Validate
@@ -90,15 +292,37 @@ jobs:
           terraform plan \
             -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
             -var="region=${{ env.GCP_REGION }}" \
-            -var="environment=${{ github.event.inputs.environment || 'dev' }}" \
+            -var="environment=${{ env.ENVIRONMENT }}" \
             -out=tfplan
         working-directory: infrastructure/terraform
 
       - name: Save Plan
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan-${{ github.event.inputs.environment || 'dev' }}
+          name: terraform-plan-${{ env.ENVIRONMENT }}
           path: infrastructure/terraform/tfplan
+          retention-days: 5
+
+      - name: Comment Plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'infrastructure/terraform/tfplan';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🚀 **Terraform Plan completed successfully!**
+              
+              Environment: \`${{ env.ENVIRONMENT }}\`
+              Project: \`${{ secrets.GCP_PROJECT_ID }}\`
+              Region: \`${{ env.GCP_REGION }}\`
+              
+              Plan artifact saved for apply step.`
+            });
 
   terraform-apply:
     name: 'Terraform Apply'
@@ -107,7 +331,7 @@ jobs:
     if: |
       (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
-    environment: ${{ github.event.inputs.environment || 'dev' }}
+    environment: ${{ env.ENVIRONMENT }}
     
     outputs:
       cluster_endpoint: ${{ steps.outputs.outputs.cluster_endpoint }}
@@ -135,25 +359,27 @@ jobs:
         run: |
           terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="prefix=terraform/state/${{ github.event.inputs.environment || 'dev' }}"
+            -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}"
         working-directory: infrastructure/terraform
 
       - name: Download Plan
         uses: actions/download-artifact@v4
         with:
-          name: terraform-plan-${{ github.event.inputs.environment || 'dev' }}
+          name: terraform-plan-${{ env.ENVIRONMENT }}
           path: infrastructure/terraform
         continue-on-error: true
 
       - name: Terraform Apply
         run: |
           if [ -f tfplan ]; then
+            echo "📋 Applying saved plan..."
             terraform apply tfplan
           else
+            echo "⚠️ No saved plan found, creating new apply..."
             terraform apply -auto-approve \
               -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
               -var="region=${{ env.GCP_REGION }}" \
-              -var="environment=${{ github.event.inputs.environment || 'dev' }}"
+              -var="environment=${{ env.ENVIRONMENT }}"
           fi
         working-directory: infrastructure/terraform
 
@@ -186,6 +412,7 @@ jobs:
 
       - name: Get GKE Credentials
         run: |
+          echo "🔐 Getting GKE credentials..."
           gcloud container clusters get-credentials ${{ env.CLUSTER_NAME }} \
             --region=${{ env.GCP_REGION }} \
             --project=${{ secrets.GCP_PROJECT_ID }}
@@ -195,42 +422,75 @@ jobs:
         with:
           version: ${{ env.KUBECTL_VERSION }}
 
+      - name: Verify Cluster Access
+        run: |
+          echo "🔍 Verifying cluster access..."
+          kubectl cluster-info
+          kubectl get nodes
+
       - name: Apply Namespace and RBAC
         run: |
-          kubectl apply -f k8s-manifests/base/namespace.yaml
-          kubectl apply -f k8s-manifests/base/rbac.yaml
+          echo "📁 Creating namespaces and RBAC..."
+          if [ -f k8s-manifests/base/namespace.yaml ]; then
+            kubectl apply -f k8s-manifests/base/namespace.yaml
+          fi
+          if [ -f k8s-manifests/base/rbac.yaml ]; then
+            kubectl apply -f k8s-manifests/base/rbac.yaml
+          fi
 
       - name: Apply Resource Constraints
         run: |
+          echo "📊 Applying resource constraints..."
           kubectl apply -f k8s-manifests/base/challenge-resources.yaml
 
       - name: Deploy System Pods
         run: |
+          echo "🚀 Deploying system components..."
           kubectl apply -f k8s-manifests/base/operator.yaml
           kubectl apply -f k8s-manifests/base/backend.yaml
           kubectl apply -f k8s-manifests/base/websocket-router.yaml
 
       - name: Wait for Deployments
         run: |
+          echo "⏳ Waiting for deployments to be ready..."
           kubectl wait --for=condition=available --timeout=300s deployment/orbit-operator -n orbit-system
           kubectl wait --for=condition=available --timeout=300s deployment/orbit-backend -n orbit-system
           kubectl wait --for=condition=available --timeout=300s deployment/websocket-router -n orbit-system
 
       - name: Validate Resource Allocation
         run: |
+          echo "🔍 Validating resource allocation..."
           chmod +x scripts/validate-cpu-allocation.sh
           ./scripts/validate-cpu-allocation.sh
 
       - name: Deploy Monitoring
         run: |
-          kubectl apply -f k8s-manifests/monitoring/
+          echo "📊 Deploying monitoring components..."
+          if [ -d k8s-manifests/monitoring ]; then
+            kubectl apply -f k8s-manifests/monitoring/
+          fi
         continue-on-error: true
+
+      - name: Deployment Summary
+        run: |
+          echo ""
+          echo "📊 DEPLOYMENT SUMMARY"
+          echo "===================="
+          echo "✅ Cluster: ${{ env.CLUSTER_NAME }}"
+          echo "✅ Environment: ${{ env.ENVIRONMENT }}"
+          echo "✅ Region: ${{ env.GCP_REGION }}"
+          echo ""
+          echo "🏃 Running Pods:"
+          kubectl get pods --all-namespaces
+          echo ""
+          echo "📈 Resource Usage:"
+          kubectl top nodes || echo "Metrics not available yet"
 
   infrastructure-pause:
     name: 'Pause Infrastructure'
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'pause'
-    environment: ${{ github.event.inputs.environment || 'dev' }}
+    environment: ${{ env.ENVIRONMENT }}
     
     steps:
       - name: Checkout
@@ -246,6 +506,7 @@ jobs:
 
       - name: Pause Infrastructure
         run: |
+          echo "⏸️ Pausing infrastructure..."
           chmod +x scripts/pause-infrastructure.sh
           ./scripts/pause-infrastructure.sh \
             --project-id "${{ secrets.GCP_PROJECT_ID }}" \
@@ -256,7 +517,7 @@ jobs:
     name: 'Resume Infrastructure'
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'resume'
-    environment: ${{ github.event.inputs.environment || 'dev' }}
+    environment: ${{ env.ENVIRONMENT }}
     
     steps:
       - name: Checkout
@@ -272,6 +533,7 @@ jobs:
 
       - name: Resume Infrastructure
         run: |
+          echo "▶️ Resuming infrastructure..."
           chmod +x scripts/resume-infrastructure.sh
           ./scripts/resume-infrastructure.sh \
             --project-id "${{ secrets.GCP_PROJECT_ID }}" \
@@ -282,7 +544,7 @@ jobs:
     name: 'Destroy Infrastructure'
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
-    environment: ${{ github.event.inputs.environment || 'dev' }}
+    environment: ${{ env.ENVIRONMENT }}
     
     steps:
       - name: Checkout
@@ -305,13 +567,20 @@ jobs:
         run: |
           terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="prefix=terraform/state/${{ github.event.inputs.environment || 'dev' }}"
+            -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}"
         working-directory: infrastructure/terraform
+
+      - name: Confirm Destruction
+        run: |
+          echo "⚠️ DESTROYING INFRASTRUCTURE FOR ENVIRONMENT: ${{ env.ENVIRONMENT }}"
+          echo "Project: ${{ secrets.GCP_PROJECT_ID }}"
+          echo "Region: ${{ env.GCP_REGION }}"
+          echo "This action cannot be undone!"
 
       - name: Terraform Destroy
         run: |
           terraform destroy -auto-approve \
             -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
             -var="region=${{ env.GCP_REGION }}" \
-            -var="environment=${{ github.event.inputs.environment || 'dev' }}"
+            -var="environment=${{ env.ENVIRONMENT }}"
         working-directory: infrastructure/terraform

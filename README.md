@@ -177,3 +177,20 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## 🤝 Contributing
 
 Please read [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
+
+
+SYSTEM COMPONENTS (Fixed):
+├── System Nodes: 2 × e2-standard-2 = 4 vCPU
+├── Kubernetes System: ~2 vCPU
+├── Orbit Operator: 0.3 vCPU
+├── Backend API: 1 vCPU (2 replicas × 0.5)
+├── WebSocket Router: 1.2 vCPU (2 replicas × 0.6)
+└── Total System: ~8.5 vCPU
+
+CHALLENGE WORKLOADS (Variable):
+├── Available CPU: 50 - 8.5 = 41.5 vCPU
+├── Challenge Pods: 50 × 0.5 = 25 vCPU
+├── Node Overhead: ~10 nodes × 0.8 = 8 vCPU
+└── Buffer: 8.5 vCPU
+
+TOTAL: 8.5 + 25 + 8 + 8.5 = 50 vCPU 

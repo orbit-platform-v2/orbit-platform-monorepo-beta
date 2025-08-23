@@ -44,7 +44,7 @@ resource "google_cloudbuild_trigger" "deploy_trigger" {
 
 github {
   owner = "orbit-platform-v2"
-  name  = "orbit-platform-monorepo-v1"  # Your actual repo name
+  name  = "orbit-platform-monorepo-beta"  # Your actual repo name
 }
 
   substitutions = {
