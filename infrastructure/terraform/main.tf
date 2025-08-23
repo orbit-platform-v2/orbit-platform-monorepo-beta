@@ -342,6 +342,13 @@ resource "google_project_iam_member" "github_actions_bigquery_admin" {
   member  = "serviceAccount:${var.github_actions_sa_email}"
 }
 
+# IAM permission for GitHub Actions to use default compute service account
+resource "google_project_iam_member" "github_actions_compute_sa_user" {
+  project = var.project_id
+  role    = "roles/iam.serviceAccountUser"
+  member  = "serviceAccount:${var.github_actions_sa_email}"
+}
+
 # BigQuery dataset for GKE usage data
 resource "google_bigquery_dataset" "gke_usage" {
   dataset_id                  = "gke_usage_data"

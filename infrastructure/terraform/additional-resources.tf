@@ -139,13 +139,13 @@ resource "google_logging_metric" "pod_creation_metric" {
   filter = "resource.type=\"k8s_pod\" AND labels.\"k8s-pod/app\"=\"challenge-pod\""
 
   metric_descriptor {
-    metric_kind  = "GAUGE"
+    metric_kind  = "CUMULATIVE"
     value_type   = "INT64"
     display_name = "Challenge Pod Creation Rate"
   }
 
-  # Remove value_extractor for non-DISTRIBUTION metrics
-  # value_extractor = "1"
+  # Use value_extractor for CUMULATIVE metrics to count log entries
+  value_extractor = "1"
 }
 
 # Storage bucket for backups and logs
