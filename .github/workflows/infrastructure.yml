@@ -28,6 +28,28 @@ on:
           - validate-setup
           - plan
           - apply
+          - plan-and-apply
+          - k8s-deploy
+          - pause
+          - resume
+          - destroy
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+        description: 'Action to perform'
+        required: true
+        default: 'validate-setup'
+        type: choice
+        options:
+          - validate-setup
+          - plan
+          - apply
           - pause
           - resume
           - destroy
@@ -73,7 +95,86 @@ jobs:
   validate-setup:
     name: 'Validate GCP Setup & Service Account'
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 10
+    if: |
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.action == 'validate-setup'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify GitHub Secrets
+        run: |
+          echo "🔍 Verifying GitHub secrets configuration..."
+          
+          if [[ -n "$GCP_PROJECT_ID" ]]; then
+            echo "✅ GCP_PROJECT_ID is set: $GCP_PROJECT_ID"
+          else
+            echo "❌ GCP_PROJECT_ID is not set"
+            exit 1
+          fi
+          
+          if [[ -n "$GCP_SA_KEY" ]]; then
+            echo "✅ GCP_SA_KEY is set (length: ${#GCP_SA_KEY} characters)"
+          else
+            echo "❌ GCP_SA_KEY is not set"
+            exit 1
+          fi
+          
+          if [[ -n "$TF_STATE_BUCKET" ]]; then
+            echo "✅ TF_STATE_BUCKET is set: $TF_STATE_BUCKET"
+          else
+            echo "❌ TF_STATE_BUCKET is not set"
+            exit 1
+          fi
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+
+      - name: Test Service Account Permissions
+        run: |
+          echo "🧪 Testing service account permissions..."
+          
+          # Test Compute Engine API
+          if gcloud compute zones list --limit=1 --quiet; then
+            echo "✅ Compute Engine API access working"
+          else
+            echo "❌ Compute Engine API access failed"
+            exit 1
+          fi
+          
+          # Test Container API
+          if gcloud container clusters list --limit=1 --quiet; then
+            echo "✅ Container API access working"
+          else
+            echo "❌ Container API access failed"
+            exit 1
+          fi
+          
+          # Test Storage API
+          if gsutil ls gs://${{ secrets.TF_STATE_BUCKET }} 2>/dev/null; then
+            echo "✅ Terraform state bucket accessible"
+          else
+            echo "❌ Terraform state bucket not accessible"
+            exit 1
+          fi
+          
+          echo ""
+          echo "🎉 All validations passed! You're ready to deploy infrastructure."
+          echo ""
+          echo "🔗 Next steps:"
+          echo "1. Run 'plan' to see what will be created"
+          echo "2. Run 'apply' or 'plan-and-apply' to deploy"
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'validate-setup'
     
     steps:
@@ -267,7 +368,50 @@ jobs:
   terraform-plan:
     name: 'Terraform Plan'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: |
+      (github.event_name == 'workflow_dispatch' && 
+       (github.event.inputs.action == 'plan' || github.event.inputs.action == 'plan-and-apply')) ||
+      (github.event_name == 'pull_request')
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Terraform Init
+        working-directory: ./infrastructure/terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}"
+
+      - name: Terraform Plan
+        working-directory: ./infrastructure/terraform
+        run: |
+          terraform plan \
+            -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
+            -var="environment=${{ env.ENVIRONMENT }}" \
+            -out=tfplan
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ env.ENVIRONMENT }}
+          path: infrastructure/terraform/tfplan
+          retention-days: 5
       github.event_name == 'pull_request' || 
       (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan') ||
       (github.event_name == 'push' && contains(github.event.head_commit.message, '[plan]'))
@@ -353,6 +497,68 @@ jobs:
   terraform-apply:
     name: 'Terraform Apply'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: |
+      (github.event_name == 'workflow_dispatch' && 
+       github.event.inputs.action == 'plan-and-apply') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: terraform-plan
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Terraform Init
+        working-directory: ./infrastructure/terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}"
+
+      - name: Download Plan Artifact (if from plan-and-apply)
+        if: github.event.inputs.action == 'plan-and-apply'
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ env.ENVIRONMENT }}
+          path: infrastructure/terraform/
+
+      - name: Generate New Plan (if direct apply)
+        if: github.event.inputs.action == 'apply'
+        working-directory: ./infrastructure/terraform
+        run: |
+          terraform plan \
+            -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
+            -var="environment=${{ env.ENVIRONMENT }}" \
+            -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: ./infrastructure/terraform
+        run: |
+          terraform apply -auto-approve tfplan
+
+      - name: Get Terraform Outputs
+        working-directory: ./infrastructure/terraform
+        run: |
+          echo "## 🎉 Infrastructure Deployment Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Terraform Outputs:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          terraform output >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+    runs-on: ubuntu-latest
     needs: terraform-plan
     if: |
       (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
@@ -416,8 +622,113 @@ jobs:
           echo "cluster_ca_certificate=$(terraform output -raw cluster_ca_certificate)" >> $GITHUB_OUTPUT
         working-directory: infrastructure/terraform
 
+  # Direct apply job (no plan dependency)
+  terraform-apply-direct:
+    name: 'Terraform Apply (Direct)'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: |
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.action == 'apply'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Terraform Init
+        working-directory: ./infrastructure/terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}"
+
+      - name: Terraform Plan
+        working-directory: ./infrastructure/terraform
+        run: |
+          echo "🔄 Generating fresh plan for apply..."
+          terraform plan \
+            -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
+            -var="environment=${{ env.ENVIRONMENT }}" \
+            -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: ./infrastructure/terraform
+        run: |
+          echo "🚀 Applying infrastructure changes..."
+          terraform apply -auto-approve tfplan
+
+      - name: Get Terraform Outputs
+        working-directory: ./infrastructure/terraform
+        run: |
+          echo "## 🎉 Infrastructure Deployment Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Terraform Outputs:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          terraform output >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Next Steps:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Configure kubectl: \`gcloud container clusters get-credentials ${{ env.CLUSTER_NAME }} --region=${{ env.GCP_REGION }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "2. Deploy K8s manifests: Select 'k8s-deploy' action" >> $GITHUB_STEP_SUMMARY
+          echo "3. Access platform at the load balancer IP above" >> $GITHUB_STEP_SUMMARY
+
   k8s-deploy:
     name: 'Deploy Kubernetes Manifests'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: |
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.action == 'k8s-deploy'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/v${{ env.KUBECTL_VERSION }}/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Configure kubectl
+        run: |
+          gcloud container clusters get-credentials ${{ env.CLUSTER_NAME }} \
+            --region=${{ env.GCP_REGION }} \
+            --project=${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Deploy Kubernetes Manifests
+        run: |
+          echo "🚀 Deploying Kubernetes manifests..."
+          kubectl apply -f k8s-manifests/base/
+          
+          echo "⏳ Waiting for deployments to be ready..."
+          kubectl wait --for=condition=ready pod -l app=backend --timeout=300s
+          kubectl wait --for=condition=ready pod -l app=websocket-router --timeout=300s
+          
+          echo "✅ Deployments ready!"
+          echo "📊 Cluster status:" 
+          kubectl get pods -A
     runs-on: ubuntu-latest
     needs: terraform-apply
     if: |
@@ -515,6 +826,43 @@ jobs:
   infrastructure-pause:
     name: 'Pause Infrastructure'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: |
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.action == 'pause'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Pause Infrastructure
+        run: |
+          echo "⏸️ Pausing infrastructure to save costs..."
+          
+          # Scale down node pools
+          gcloud container clusters resize ${{ env.CLUSTER_NAME }} \
+            --node-pool=system-pool \
+            --num-nodes=1 \
+            --region=${{ env.GCP_REGION }} \
+            --quiet
+            
+          gcloud container clusters resize ${{ env.CLUSTER_NAME }} \
+            --node-pool=challenge-pool \
+            --num-nodes=0 \
+            --region=${{ env.GCP_REGION }} \
+            --quiet
+          
+          echo "✅ Infrastructure paused successfully!"
+          echo "💰 Cost savings: ~70-80% reduction"
+    runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'pause'
     environment: ${{ github.event.inputs.environment || 'dev' }}
     
@@ -542,6 +890,43 @@ jobs:
   infrastructure-resume:
     name: 'Resume Infrastructure'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: |
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.action == 'resume'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resume Infrastructure
+        run: |
+          echo "▶️ Resuming infrastructure to full capacity..."
+          
+          # Scale up node pools
+          gcloud container clusters resize ${{ env.CLUSTER_NAME }} \
+            --node-pool=system-pool \
+            --num-nodes=2 \
+            --region=${{ env.GCP_REGION }} \
+            --quiet
+            
+          gcloud container clusters resize ${{ env.CLUSTER_NAME }} \
+            --node-pool=challenge-pool \
+            --num-nodes=10 \
+            --region=${{ env.GCP_REGION }} \
+            --quiet
+          
+          echo "✅ Infrastructure resumed successfully!"
+          echo "🚀 Platform ready for full operations"
+    runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'resume'
     environment: ${{ github.event.inputs.environment || 'dev' }}
     
@@ -568,6 +953,49 @@ jobs:
 
   infrastructure-destroy:
     name: 'Destroy Infrastructure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: |
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.action == 'destroy'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Terraform Init
+        working-directory: ./infrastructure/terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}"
+
+      - name: Terraform Destroy
+        working-directory: ./infrastructure/terraform
+        run: |
+          echo "🗑️ Destroying infrastructure..."
+          echo "⚠️ This will remove ALL resources!"
+          
+          terraform destroy \
+            -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
+            -var="environment=${{ env.ENVIRONMENT }}" \
+            -auto-approve
+          
+          echo "✅ Infrastructure destroyed successfully!"
+          echo "💰 All resources have been removed"
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
     environment: ${{ github.event.inputs.environment || 'dev' }}
