@@ -86,12 +86,6 @@ resource "google_cloudbuild_trigger" "deploy_trigger" {
   depends_on = [google_project_service.required_apis]
 }
 
-# Container Registry (being replaced by Artifact Registry)
-resource "google_container_registry" "registry" {
-  project  = var.project_id
-  location = "US"
-}
-
 # Artifact Registry for container images
 resource "google_artifact_registry_repository" "docker_repo" {
   location      = var.region
@@ -107,7 +101,7 @@ resource "google_artifact_registry_repository" "docker_repo" {
 
 # Service Account for Cloud Build
 resource "google_service_account" "cloudbuild_sa" {
-  account_id   = "${var.cluster_name}-cloudbuild"
+  account_id   = "orbit-cloudbuild"
   display_name = "Cloud Build Service Account"
   description  = "Service account for Cloud Build operations"
 }
