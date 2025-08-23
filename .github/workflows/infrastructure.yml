@@ -19,6 +19,7 @@ on:
           - validate-setup
           - plan
           - apply
+          - apply-direct
           - plan-and-apply
           - k8s-deploy
           - pause
@@ -166,7 +167,7 @@ jobs:
     timeout-minutes: 15
     if: |
       github.event_name == 'workflow_dispatch' && 
-      (github.event.inputs.action == 'plan' || github.event.inputs.action == 'plan-and-apply')
+      (github.event.inputs.action == 'plan' || github.event.inputs.action == 'apply' || github.event.inputs.action == 'plan-and-apply')
     
     steps:
       - name: Checkout
@@ -219,7 +220,7 @@ jobs:
     needs: plan
     if: |
       github.event_name == 'workflow_dispatch' && 
-      github.event.inputs.action == 'plan-and-apply' &&
+      (github.event.inputs.action == 'apply' || github.event.inputs.action == 'plan-and-apply') &&
       needs.plan.result == 'success'
     
     steps:
@@ -262,7 +263,7 @@ jobs:
     timeout-minutes: 30
     if: |
       github.event_name == 'workflow_dispatch' && 
-      github.event.inputs.action == 'apply'
+      github.event.inputs.action == 'apply-direct'
     
     steps:
       - name: Checkout
