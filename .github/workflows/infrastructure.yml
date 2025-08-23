@@ -22,7 +22,7 @@ on:
       action:
         description: 'Action to perform'
         required: true
-        default: 'plan'
+        default: 'validate-setup'
         type: choice
         options:
           - validate-setup
@@ -52,6 +52,7 @@ jobs:
   validate-setup:
     name: 'Validate GCP Setup & Service Account'
     runs-on: ubuntu-latest
+    timeout-minutes: 6
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'validate-setup'
     
     steps:
