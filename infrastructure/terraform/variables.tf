@@ -102,3 +102,22 @@ variable "cost_optimization" {
   type        = bool
   default     = true
 }
+
+variable "notification_email" {
+  description = "Email address for monitoring notifications"
+  type        = string
+  default     = "achref.messai@insat.ucar.tn"
+}
+# Add these variables to the end of your existing variables.tf file
+
+variable "github_repo_owner" {
+  description = "GitHub repository owner"
+  type        = string
+  default     = "achrefmessai01" # Update with your GitHub username
+}
+
+variable "github_repo_name" {
+  description = "GitHub repository name"
+  type        = string
+  default     = "orbit-platform-monorepo-beta"
+}

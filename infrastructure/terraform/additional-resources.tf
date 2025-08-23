@@ -38,13 +38,43 @@ resource "google_dns_record_set" "platform_a" {
 
 # Cloud Build trigger for automated deployments (optional)
 resource "google_cloudbuild_trigger" "deploy_trigger" {
-  count    = var.environment == "prod" ? 1 : 0
-  name     = "${var.cluster_name}-deploy"
-  filename = "cloudbuild.yaml"
+  count       = var.environment == "prod" ? 1 : 0
+  name        = "${var.cluster_name}-deploy"
+  description = "Automated deployment trigger for Orbit Challenge Platform"
 
   github {
     owner = "orbit-platform-v2"
-    name  = "orbit-platform-monorepo-beta" # Your actual repo name
+    name  = "orbit-platform-monorepo-beta"
+
+    push {
+      branch = "^main$"
+    }
+  }
+
+  # Add the build configuration
+  build {
+    step {
+      name = "gcr.io/cloud-builders/kubectl"
+      env = [
+        "CLOUDSDK_COMPUTE_ZONE=${var.region}",
+        "CLOUDSDK_CONTAINER_CLUSTER=${var.cluster_name}"
+      ]
+      args = [
+        "apply",
+        "-f",
+        "k8s-manifests/"
+      ]
+    }
+
+    step {
+      name = "gcr.io/cloud-builders/docker"
+      args = [
+        "build",
+        "-t",
+        "${var.region}-docker.pkg.dev/${var.project_id}/${var.cluster_name}-docker/orbit-backend:$COMMIT_SHA",
+        "./backend"
+      ]
+    }
   }
 
   substitutions = {
@@ -52,6 +82,8 @@ resource "google_cloudbuild_trigger" "deploy_trigger" {
     _REGION       = var.region
     _PROJECT_ID   = var.project_id
   }
+
+  depends_on = [google_project_service.required_apis]
 }
 
 # Container Registry (being replaced by Artifact Registry)
@@ -93,16 +125,17 @@ resource "google_project_iam_member" "cloudbuild_roles" {
   member  = "serviceAccount:${google_service_account.cloudbuild_sa.email}"
 }
 
-# Monitoring workspace
-resource "google_monitoring_workspace" "workspace" {
-  count                 = var.enable_monitoring ? 1 : 0
-  provider              = google-beta
-  workspace_id          = var.project_id
-  notification_channels = []
+# Monitoring alerts and notifications
+resource "google_monitoring_notification_channel" "email" {
+  count        = var.enable_monitoring ? 1 : 0
+  display_name = "Orbit Platform Email Alerts"
+  type         = "email"
 
   labels = {
-    environment = var.environment
+    email_address = var.notification_email
   }
+
+  enabled = true
 }
 
 # Log-based metrics for monitoring
@@ -117,9 +150,7 @@ resource "google_logging_metric" "pod_creation_metric" {
     display_name = "Challenge Pod Creation Rate"
   }
 
-  extraction {
-    count = true
-  }
+  value_extractor = "1"
 }
 
 # Storage bucket for backups and logs
