@@ -322,6 +322,26 @@ resource "google_project_iam_member" "gcr_access" {
   member  = "serviceAccount:${google_service_account.gke_nodes.email}"
 }
 
+# BigQuery IAM for dataset creation and management
+resource "google_project_iam_member" "bigquery_data_editor" {
+  project = var.project_id
+  role    = "roles/bigquery.dataEditor"
+  member  = "serviceAccount:${google_service_account.gke_nodes.email}"
+}
+
+resource "google_project_iam_member" "bigquery_user" {
+  project = var.project_id
+  role    = "roles/bigquery.user"
+  member  = "serviceAccount:${google_service_account.gke_nodes.email}"
+}
+
+# BigQuery IAM for GitHub Actions service account (for dataset creation)
+resource "google_project_iam_member" "github_actions_bigquery_admin" {
+  project = var.project_id
+  role    = "roles/bigquery.admin"
+  member  = "serviceAccount:${var.github_actions_sa_email}"
+}
+
 # BigQuery dataset for GKE usage data
 resource "google_bigquery_dataset" "gke_usage" {
   dataset_id                  = "gke_usage_data"

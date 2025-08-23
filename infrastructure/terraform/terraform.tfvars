@@ -41,3 +41,6 @@ max_challenge_cpu_allocation = 44 # 11 × e2-standard-4
 
 # Cost Optimization
 enable_preemptible = true
+
+# GitHub Actions Configuration
+github_actions_sa_email = "orbit-github-actions@smart-pipeline.iam.gserviceaccount.com"

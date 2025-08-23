@@ -122,6 +122,12 @@ variable "github_repo_name" {
   default     = "orbit-platform-monorepo-beta"
 }
 
+variable "github_actions_sa_email" {
+  description = "GitHub Actions service account email"
+  type        = string
+  default     = "orbit-github-actions@smart-pipeline.iam.gserviceaccount.com"
+}
+
 # Machine type variables
 variable "system_node_machine_type" {
   description = "Machine type for system node pool"

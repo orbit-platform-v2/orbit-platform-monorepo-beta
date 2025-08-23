@@ -144,7 +144,8 @@ resource "google_logging_metric" "pod_creation_metric" {
     display_name = "Challenge Pod Creation Rate"
   }
 
-  value_extractor = "1"
+  # Remove value_extractor for non-DISTRIBUTION metrics
+  # value_extractor = "1"
 }
 
 # Storage bucket for backups and logs
