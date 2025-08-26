@@ -375,27 +375,59 @@ jobs:
       - name: Setup Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Check Cluster Exists
+        run: |
+          echo "🔍 Checking if cluster exists..."
+          if gcloud container clusters describe ${{ env.CLUSTER_NAME }} \
+            --region ${{ env.GCP_REGION }} \
+            --project ${{ secrets.GCP_PROJECT_ID }} > /dev/null 2>&1; then
+            echo "✅ Cluster found: ${{ env.CLUSTER_NAME }}"
+            echo "CLUSTER_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "❌ Cluster not found: ${{ env.CLUSTER_NAME }}"
+            echo "CLUSTER_EXISTS=false" >> $GITHUB_ENV
+          fi
+
       - name: Pause Infrastructure
+        if: env.CLUSTER_EXISTS == 'true'
         run: |
           echo "⏸️ Pausing infrastructure to save costs..."
           
-          # Scale down node pools to 0
-          gcloud container clusters resize ${{ env.CLUSTER_NAME }} \
-            --region ${{ env.GCP_REGION }} \
-            --node-pool challenge-pool \
-            --num-nodes 0 \
-            --project ${{ secrets.GCP_PROJECT_ID }} \
-            --quiet
+          # Get list of node pools
+          NODE_POOLS=$(gcloud container node-pools list \
+            --cluster=${{ env.CLUSTER_NAME }} \
+            --region=${{ env.GCP_REGION }} \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --format="value(name)" 2>/dev/null || echo "")
           
-          gcloud container clusters resize ${{ env.CLUSTER_NAME }} \
-            --region ${{ env.GCP_REGION }} \
-            --node-pool system-pool \
-            --num-nodes 0 \
-            --project ${{ secrets.GCP_PROJECT_ID }} \
-            --quiet
+          if [ -z "$NODE_POOLS" ]; then
+            echo "❌ No node pools found or cluster doesn't exist"
+            exit 1
+          fi
+          
+          echo "📋 Found node pools: $NODE_POOLS"
+          
+          # Scale down each node pool to 0
+          for pool in $NODE_POOLS; do
+            echo "⏸️ Scaling down node pool: $pool"
+            gcloud container clusters resize ${{ env.CLUSTER_NAME }} \
+              --region ${{ env.GCP_REGION }} \
+              --node-pool $pool \
+              --num-nodes 0 \
+              --project ${{ secrets.GCP_PROJECT_ID }} \
+              --quiet || echo "⚠️ Failed to scale down $pool (may already be scaled)"
+          done
           
           echo "✅ Infrastructure paused successfully!"
-          echo "💰 Node pools scaled to 0 to save costs"
+          echo "💰 All node pools scaled to 0 to save costs"
+
+      - name: Cluster Not Found
+        if: env.CLUSTER_EXISTS == 'false'
+        run: |
+          echo "ℹ️ No cluster found to pause"
+          echo "Either the cluster doesn't exist or has already been destroyed"
+          echo "Current project: ${{ secrets.GCP_PROJECT_ID }}"
+          echo "Expected cluster: ${{ env.CLUSTER_NAME }}"
 
   resume:
     name: 'Resume Infrastructure'
@@ -417,27 +449,83 @@ jobs:
       - name: Setup Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Check Cluster Exists
+        run: |
+          echo "🔍 Checking if cluster exists..."
+          if gcloud container clusters describe ${{ env.CLUSTER_NAME }} \
+            --region ${{ env.GCP_REGION }} \
+            --project ${{ secrets.GCP_PROJECT_ID }} > /dev/null 2>&1; then
+            echo "✅ Cluster found: ${{ env.CLUSTER_NAME }}"
+            echo "CLUSTER_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "❌ Cluster not found: ${{ env.CLUSTER_NAME }}"
+            echo "CLUSTER_EXISTS=false" >> $GITHUB_ENV
+          fi
+
       - name: Resume Infrastructure
+        if: env.CLUSTER_EXISTS == 'true'
         run: |
           echo "▶️ Resuming infrastructure..."
           
-          # Scale up node pools
-          gcloud container clusters resize ${{ env.CLUSTER_NAME }} \
-            --region ${{ env.GCP_REGION }} \
-            --node-pool system-pool \
-            --num-nodes 2 \
-            --project ${{ secrets.GCP_PROJECT_ID }} \
-            --quiet
+          # Get list of node pools and their configurations
+          NODE_POOLS=$(gcloud container node-pools list \
+            --cluster=${{ env.CLUSTER_NAME }} \
+            --region=${{ env.GCP_REGION }} \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --format="csv[no-heading](name)" 2>/dev/null || echo "")
           
-          gcloud container clusters resize ${{ env.CLUSTER_NAME }} \
-            --region ${{ env.GCP_REGION }} \
-            --node-pool challenge-pool \
-            --num-nodes 10 \
-            --project ${{ secrets.GCP_PROJECT_ID }} \
-            --quiet
+          if [ -z "$NODE_POOLS" ]; then
+            echo "❌ No node pools found"
+            exit 1
+          fi
+          
+          echo "📋 Found node pools: $NODE_POOLS"
+          
+          # Resume system pool (if exists)
+          if echo "$NODE_POOLS" | grep -q "system-pool"; then
+            echo "▶️ Resuming system-pool to 2 nodes..."
+            gcloud container clusters resize ${{ env.CLUSTER_NAME }} \
+              --region ${{ env.GCP_REGION }} \
+              --node-pool system-pool \
+              --num-nodes 2 \
+              --project ${{ secrets.GCP_PROJECT_ID }} \
+              --quiet || echo "⚠️ Failed to resume system-pool"
+          fi
+          
+          # Resume challenge pool (if exists)
+          if echo "$NODE_POOLS" | grep -q "challenge-pool"; then
+            echo "▶️ Resuming challenge-pool to 10 nodes..."
+            gcloud container clusters resize ${{ env.CLUSTER_NAME }} \
+              --region ${{ env.GCP_REGION }} \
+              --node-pool challenge-pool \
+              --num-nodes 10 \
+              --project ${{ secrets.GCP_PROJECT_ID }} \
+              --quiet || echo "⚠️ Failed to resume challenge-pool"
+          fi
+          
+          # Resume any other pools to 1 node minimum
+          for pool in $NODE_POOLS; do
+            if [ "$pool" != "system-pool" ] && [ "$pool" != "challenge-pool" ]; then
+              echo "▶️ Resuming $pool to 1 node..."
+              gcloud container clusters resize ${{ env.CLUSTER_NAME }} \
+                --region ${{ env.GCP_REGION }} \
+                --node-pool $pool \
+                --num-nodes 1 \
+                --project ${{ secrets.GCP_PROJECT_ID }} \
+                --quiet || echo "⚠️ Failed to resume $pool"
+            fi
+          done
           
           echo "✅ Infrastructure resumed successfully!"
           echo "🚀 Node pools scaled back to operational levels"
+
+      - name: Cluster Not Found
+        if: env.CLUSTER_EXISTS == 'false'
+        run: |
+          echo "ℹ️ No cluster found to resume"
+          echo "You may need to run 'apply' action first to create the infrastructure"
+          echo "Current project: ${{ secrets.GCP_PROJECT_ID }}"
+          echo "Expected cluster: ${{ env.CLUSTER_NAME }}"
 
   destroy:
     name: 'Destroy Infrastructure'
@@ -476,14 +564,54 @@ jobs:
           echo "⚠️ DESTROYING INFRASTRUCTURE FOR ENVIRONMENT: ${{ env.ENVIRONMENT }}"
           echo "Project: ${{ secrets.GCP_PROJECT_ID }}"
           echo "Region: ${{ env.GCP_REGION }}"
+          echo "Cluster: ${{ env.CLUSTER_NAME }}"
           echo "This action cannot be undone!"
+          echo ""
+          echo "🔍 Checking current resources..."
+          
+          # Check if cluster exists
+          if gcloud container clusters describe ${{ env.CLUSTER_NAME }} \
+            --region ${{ env.GCP_REGION }} \
+            --project ${{ secrets.GCP_PROJECT_ID }} > /dev/null 2>&1; then
+            echo "📋 Found cluster: ${{ env.CLUSTER_NAME }}"
+            gcloud container node-pools list \
+              --cluster=${{ env.CLUSTER_NAME }} \
+              --region=${{ env.GCP_REGION }} \
+              --project=${{ secrets.GCP_PROJECT_ID }} \
+              --format="table(name,initialNodeCount,machineType)" || true
+          else
+            echo "ℹ️ Cluster not found - may already be destroyed"
+          fi
 
       - name: Terraform Destroy
         run: |
+          echo "🗄️ Starting Terraform destroy with all required variables..."
           terraform destroy \
             -var="project_id=${{ secrets.GCP_PROJECT_ID }}" \
             -var="region=${{ env.GCP_REGION }}" \
+            -var="zone=us-central1-a" \
             -var="environment=${{ env.ENVIRONMENT }}" \
+            -var="cluster_name=${{ env.CLUSTER_NAME }}" \
+            -var="system_node_count=2" \
+            -var="system_node_machine_type=e2-standard-2" \
+            -var="challenge_node_count=10" \
+            -var="challenge_node_machine_type=e2-standard-4" \
+            -var="network_name=orbit-vpc" \
+            -var="subnet_name=orbit-subnet" \
+            -var="subnet_cidr=10.0.0.0/16" \
+            -var="system_auto_scaling_min=2" \
+            -var="system_auto_scaling_max=2" \
+            -var="challenge_auto_scaling_min=5" \
+            -var="challenge_auto_scaling_max=11" \
+            -var="max_challenge_pods=50" \
+            -var="challenge_ttl=30m" \
+            -var="challenge_cpu_limit=500m" \
+            -var="challenge_memory_limit=512Mi" \
+            -var="total_cpu_budget=50" \
+            -var="system_cpu_allocation=4" \
+            -var="max_challenge_cpu_allocation=44" \
+            -var="enable_preemptible=true" \
+            -var="github_actions_sa_email=orbit-github-actions@smart-pipeline.iam.gserviceaccount.com" \
             -auto-approve
         working-directory: infrastructure/terraform
         
@@ -491,3 +619,28 @@ jobs:
         run: |
           echo "✅ Infrastructure destroyed successfully!"
           echo "💰 All resources have been removed"
+          echo ""
+          echo "🔍 Verifying cleanup..."
+          
+          # Verify major resources are gone
+          echo "Checking for remaining cluster..."
+          if gcloud container clusters describe ${{ env.CLUSTER_NAME }} \
+            --region ${{ env.GCP_REGION }} \
+            --project ${{ secrets.GCP_PROJECT_ID }} > /dev/null 2>&1; then
+            echo "⚠️ Cluster still exists"
+          else
+            echo "✅ Cluster destroyed"
+          fi
+          
+          echo "Checking for remaining VPC networks..."
+          VPC_COUNT=$(gcloud compute networks list \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --filter="name:*orbit*" \
+            --format="value(name)" | wc -l)
+          if [ "$VPC_COUNT" -eq 0 ]; then
+            echo "✅ VPC networks destroyed"
+          else
+            echo "⚠️ Some VPC networks may still exist"
+          fi
+          
+          echo "🎯 Destruction verification complete"
