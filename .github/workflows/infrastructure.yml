@@ -188,9 +188,23 @@ jobs:
 
       - name: Terraform Init
         run: |
-          terraform init \
+          echo "🔧 Initializing Terraform with backend configuration..."
+          
+          # Try normal init first
+          if terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}"
+            -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}"; then
+            echo "✅ Terraform initialized successfully"
+          else
+            echo "⚠️ Backend configuration changed, attempting migration..."
+            # If init fails due to backend config change, try with migrate-state
+            terraform init \
+              -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+              -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}" \
+              -migrate-state \
+              -input=false
+            echo "✅ Terraform initialized with state migration"
+          fi
         working-directory: infrastructure/terraform
 
       - name: Terraform Validate
@@ -242,9 +256,23 @@ jobs:
 
       - name: Terraform Init
         run: |
-          terraform init \
+          echo "🔧 Initializing Terraform with backend configuration..."
+          
+          # Try normal init first
+          if terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}"
+            -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}"; then
+            echo "✅ Terraform initialized successfully"
+          else
+            echo "⚠️ Backend configuration changed, attempting migration..."
+            # If init fails due to backend config change, try with migrate-state
+            terraform init \
+              -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+              -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}" \
+              -migrate-state \
+              -input=false
+            echo "✅ Terraform initialized with state migration"
+          fi
         working-directory: infrastructure/terraform
 
       - name: Download Plan
@@ -284,9 +312,23 @@ jobs:
 
       - name: Terraform Init
         run: |
-          terraform init \
+          echo "🔧 Initializing Terraform with backend configuration..."
+          
+          # Try normal init first
+          if terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}"
+            -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}"; then
+            echo "✅ Terraform initialized successfully"
+          else
+            echo "⚠️ Backend configuration changed, attempting migration..."
+            # If init fails due to backend config change, try with migrate-state
+            terraform init \
+              -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+              -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}" \
+              -migrate-state \
+              -input=false
+            echo "✅ Terraform initialized with state migration"
+          fi
         working-directory: infrastructure/terraform
 
       - name: Terraform Validate
@@ -554,9 +596,24 @@ jobs:
 
       - name: Terraform Init
         run: |
-          terraform init \
+          echo "🔧 Initializing Terraform with backend configuration..."
+          
+          # For destroy, we want to try to reconfigure if there's a backend change
+          # since we need to work with whatever state exists
+          if terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}"
+            -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}"; then
+            echo "✅ Terraform initialized successfully"
+          else
+            echo "⚠️ Backend configuration changed, reconfiguring..."
+            # For destroy, use reconfigure to work with current state
+            terraform init \
+              -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+              -backend-config="prefix=terraform/state/${{ env.ENVIRONMENT }}" \
+              -reconfigure \
+              -input=false
+            echo "✅ Terraform initialized with reconfiguration"
+          fi
         working-directory: infrastructure/terraform
 
       - name: Confirm Destruction
