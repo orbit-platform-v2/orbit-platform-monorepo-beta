@@ -144,8 +144,8 @@ resource "google_logging_metric" "pod_creation_metric" {
     display_name = "Challenge Pod Creation Rate"
   }
 
-  # Use value_extractor for CUMULATIVE metrics to count log entries
-  value_extractor = "1"
+  # Remove value_extractor for CUMULATIVE metrics
+  # value_extractor = "1"  # This line causes the error
 }
 
 # Storage bucket for backups and logs
