@@ -254,10 +254,10 @@ resource "google_container_node_pool" "challenge_nodes" {
   name       = "challenge-pool"
   location   = var.zone # Use single zone instead of region
   cluster    = google_container_cluster.primary.name
-  node_count = var.challenge_node_count
+  # Remove node_count when using autoscaling - let autoscaler manage the count
 
   node_config {
-    preemptible  = true                            # Use preemptible for cost savings
+    preemptible  = var.enable_preemptible           # Use variable instead of hardcoded true
     machine_type = var.challenge_node_machine_type # 4 vCPU, 16GB RAM per node
     disk_size_gb = 50                              # Optimized disk size for quota management
 

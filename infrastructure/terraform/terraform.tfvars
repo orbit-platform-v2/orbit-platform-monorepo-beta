@@ -39,8 +39,8 @@ total_cpu_budget             = 50
 system_cpu_allocation        = 4  # 1 × e2-standard-4
 max_challenge_cpu_allocation = 40 # 10 × e2-standard-4
 
-# Cost Optimization
-enable_preemptible = true
+# Cost Optimization - Temporarily disable preemptible to fix ERROR state
+enable_preemptible = false
 
 # GitHub Actions Configuration
 github_actions_sa_email = "orbit-github-actions@smart-pipeline.iam.gserviceaccount.com"
