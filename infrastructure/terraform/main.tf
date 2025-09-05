@@ -186,13 +186,13 @@ resource "google_container_cluster" "primary" {
   # Security settings
   enable_shielded_nodes = true
 
-  # Resource usage export
-  resource_usage_export_config {
-    enable_network_egress_metering = true
-    bigquery_destination {
-      dataset_id = google_bigquery_dataset.gke_usage.dataset_id
-    }
-  }
+  # Removed resource_usage_export_config to prevent BigQuery dependency issues
+  # resource_usage_export_config {
+  #   enable_network_egress_metering = true
+  #   bigquery_destination {
+  #     dataset_id = google_bigquery_dataset.gke_usage.dataset_id
+  #   }
+  # }
 
   depends_on = [
     google_project_service.required_apis,
@@ -324,25 +324,26 @@ resource "google_project_iam_member" "gcr_access" {
   member  = "serviceAccount:${google_service_account.gke_nodes.email}"
 }
 
+# Removed BigQuery IAM bindings (no longer needed without BigQuery dataset)
 # BigQuery IAM for dataset creation and management
-resource "google_project_iam_member" "bigquery_data_editor" {
-  project = var.project_id
-  role    = "roles/bigquery.dataEditor"
-  member  = "serviceAccount:${google_service_account.gke_nodes.email}"
-}
-
-resource "google_project_iam_member" "bigquery_user" {
-  project = var.project_id
-  role    = "roles/bigquery.user"
-  member  = "serviceAccount:${google_service_account.gke_nodes.email}"
-}
-
-# BigQuery IAM for GitHub Actions service account (for dataset creation)
-resource "google_project_iam_member" "github_actions_bigquery_admin" {
-  project = var.project_id
-  role    = "roles/bigquery.admin"
-  member  = "serviceAccount:${var.github_actions_sa_email}"
-}
+# resource "google_project_iam_member" "bigquery_data_editor" {
+#   project = var.project_id
+#   role    = "roles/bigquery.dataEditor"
+#   member  = "serviceAccount:${google_service_account.gke_nodes.email}"
+# }
+#
+# resource "google_project_iam_member" "bigquery_user" {
+#   project = var.project_id
+#   role    = "roles/bigquery.user"
+#   member  = "serviceAccount:${google_service_account.gke_nodes.email}"
+# }
+#
+# # BigQuery IAM for GitHub Actions service account (for dataset creation)
+# resource "google_project_iam_member" "github_actions_bigquery_admin" {
+#   project = var.project_id
+#   role    = "roles/bigquery.admin"
+#   member  = "serviceAccount:${var.github_actions_sa_email}"
+# }
 
 # IAM permission for GitHub Actions to use default compute service account
 resource "google_project_iam_member" "github_actions_compute_sa_user" {
@@ -351,18 +352,19 @@ resource "google_project_iam_member" "github_actions_compute_sa_user" {
   member  = "serviceAccount:${var.github_actions_sa_email}"
 }
 
+# Removed BigQuery dataset to prevent destruction issues
 # BigQuery dataset for GKE usage data
-resource "google_bigquery_dataset" "gke_usage" {
-  dataset_id                  = "gke_usage_data"
-  friendly_name               = "GKE Usage Data"
-  description                 = "Dataset for GKE resource usage export"
-  location                    = "US"
-  default_table_expiration_ms = 86400000 # 1 day
-
-  labels = {
-    env = var.environment
-  }
-}
+# resource "google_bigquery_dataset" "gke_usage" {
+#   dataset_id                  = "gke_usage_data"
+#   friendly_name               = "GKE Usage Data"
+#   description                 = "Dataset for GKE resource usage export"
+#   location                    = "US"
+#   default_table_expiration_ms = 86400000 # 1 day
+#
+#   labels = {
+#     env = var.environment
+#   }
+# }
 
 # Load Balancer IP
 resource "google_compute_global_address" "lb_ip" {
