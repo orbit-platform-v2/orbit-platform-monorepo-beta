@@ -251,10 +251,10 @@ resource "google_container_node_pool" "system_nodes" {
 
 # Node Pool for challenge workloads
 resource "google_container_node_pool" "challenge_nodes" {
-  name       = "challenge-pool"
-  location   = var.zone # Use single zone instead of region
-  cluster    = google_container_cluster.primary.name
-  # Remove node_count when using autoscaling - let autoscaler manage the count
+  name               = "challenge-pool"
+  location           = var.zone # Use single zone instead of region
+  cluster            = google_container_cluster.primary.name
+  initial_node_count = var.challenge_auto_scaling_min # Start with minimum nodes
 
   node_config {
     preemptible  = var.enable_preemptible           # Use variable instead of hardcoded true
