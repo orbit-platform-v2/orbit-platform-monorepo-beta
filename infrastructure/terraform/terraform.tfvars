@@ -11,11 +11,11 @@ cluster_name = "orbit-challenge-cluster"
 
 # System Node Pool (for system components) - Upgraded to 4 core
 system_node_count        = 1
-system_node_machine_type = "e2-standard-4" # 4 vCPU each = 4 vCPU total
+system_node_machine_type = "n2-standard-4" # 4 vCPU each = 4 vCPU total
 
 # Challenge Node Pool (for challenge workloads) - 8 nodes autoscale to 10
 challenge_node_count        = 8
-challenge_node_machine_type = "e2-standard-4" # 4 vCPU each = 32 vCPU base, 40 vCPU max
+challenge_node_machine_type = "n2-standard-4" # 4 vCPU each = 32 vCPU base, 40 vCPU max (N2 family)
 
 # Network Configuration
 network_name = "orbit-vpc"
@@ -36,8 +36,8 @@ challenge_memory_limit = "512Mi"
 
 # CPU Budget Enforcement
 total_cpu_budget             = 50
-system_cpu_allocation        = 4  # 1 × e2-standard-4
-max_challenge_cpu_allocation = 40 # 10 × e2-standard-4
+system_cpu_allocation        = 4  # 1 × n2-standard-4
+max_challenge_cpu_allocation = 40 # 10 × n2-standard-4
 
 # Cost Optimization - Temporarily disable preemptible to fix ERROR state
 enable_preemptible = false
