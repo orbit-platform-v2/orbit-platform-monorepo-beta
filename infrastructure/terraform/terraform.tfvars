@@ -23,10 +23,10 @@ subnet_name  = "orbit-subnet"
 subnet_cidr  = "10.0.0.0/16"
 
 # Auto-scaling Configuration (CRITICAL for budget control)
-system_auto_scaling_min    = 2
-system_auto_scaling_max    = 2  # Keep system nodes fixed
-challenge_auto_scaling_min = 5  # Minimum challenge nodes
-challenge_auto_scaling_max = 11 # Maximum 11 × 4 = 44 vCPU for challenges
+system_auto_scaling_min    = 1
+system_auto_scaling_max    = 1  # Keep system nodes fixed at 1
+challenge_auto_scaling_min = 8  # Minimum challenge nodes  
+challenge_auto_scaling_max = 10 # Maximum 10 × 4 = 40 vCPU for challenges
 
 # Challenge Configuration
 max_challenge_pods     = 50
@@ -36,8 +36,8 @@ challenge_memory_limit = "512Mi"
 
 # CPU Budget Enforcement
 total_cpu_budget             = 50
-system_cpu_allocation        = 4  # 2 × e2-standard-2
-max_challenge_cpu_allocation = 44 # 11 × e2-standard-4
+system_cpu_allocation        = 4  # 1 × e2-standard-4
+max_challenge_cpu_allocation = 40 # 10 × e2-standard-4
 
 # Cost Optimization
 enable_preemptible = true
