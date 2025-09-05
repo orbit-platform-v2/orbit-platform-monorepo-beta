@@ -76,7 +76,7 @@ variable "authorized_networks" {
 variable "node_locations" {
   description = "List of zones for node pools"
   type        = list(string)
-  default     = ["us-central1-a", "us-central1-b", "us-central1-c"]
+  default     = ["us-central1-a"]
 }
 
 variable "domain_name" {

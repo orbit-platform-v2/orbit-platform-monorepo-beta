@@ -124,7 +124,7 @@ resource "google_compute_firewall" "allow_internal" {
 # GKE Private Cluster
 resource "google_container_cluster" "primary" {
   name     = var.cluster_name
-  location = var.region
+  location = var.zone # Use single zone instead of region
 
   # Remove default node pool
   remove_default_node_pool = true
@@ -203,7 +203,7 @@ resource "google_container_cluster" "primary" {
 # Node Pool for system workloads
 resource "google_container_node_pool" "system_nodes" {
   name       = "system-pool"
-  location   = var.region
+  location   = var.zone # Use single zone instead of region
   cluster    = google_container_cluster.primary.name
   node_count = var.system_node_count
 
@@ -251,7 +251,7 @@ resource "google_container_node_pool" "system_nodes" {
 # Node Pool for challenge workloads
 resource "google_container_node_pool" "challenge_nodes" {
   name       = "challenge-pool"
-  location   = var.region
+  location   = var.zone # Use single zone instead of region
   cluster    = google_container_cluster.primary.name
   node_count = var.challenge_node_count
 
