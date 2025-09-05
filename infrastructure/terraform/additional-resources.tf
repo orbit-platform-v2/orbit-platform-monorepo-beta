@@ -132,18 +132,19 @@ resource "google_monitoring_notification_channel" "email" {
   enabled = true
 }
 
+# Removed logging metrics to eliminate configuration issues
 # Log-based metrics for monitoring
-resource "google_logging_metric" "pod_creation_metric" {
-  count  = var.enable_monitoring ? 1 : 0
-  name   = "orbit_pod_creation_rate"
-  filter = "resource.type=\"k8s_pod\" AND labels.\"k8s-pod/app\"=\"challenge-pod\""
-
-  metric_descriptor {
-    metric_kind  = "GAUGE"
-    value_type   = "INT64"
-    display_name = "Challenge Pod Creation Rate"
-  }
-}
+# resource "google_logging_metric" "pod_creation_metric" {
+#   count  = var.enable_monitoring ? 1 : 0
+#   name   = "orbit_pod_creation_rate"
+#   filter = "resource.type=\"k8s_pod\" AND labels.\"k8s-pod/app\"=\"challenge-pod\""
+#
+#   metric_descriptor {
+#     metric_kind  = "CUMULATIVE"
+#     value_type   = "INT64"
+#     display_name = "Challenge Pod Creation Rate"
+#   }
+# }
 
 # Storage bucket for backups and logs
 resource "google_storage_bucket" "platform_storage" {
