@@ -9,13 +9,13 @@ environment = "dev"
 # Cluster Configuration
 cluster_name = "orbit-challenge-cluster"
 
-# System Node Pool (for system components)
-system_node_count        = 2
-system_node_machine_type = "e2-standard-2" # 2 vCPU each = 4 vCPU total
+# System Node Pool (for system components) - Upgraded to 4 core
+system_node_count        = 1
+system_node_machine_type = "e2-standard-4" # 4 vCPU each = 4 vCPU total
 
-# Challenge Node Pool (for challenge workloads)
-challenge_node_count        = 10
-challenge_node_machine_type = "e2-standard-4" # 4 vCPU each = 40 vCPU total
+# Challenge Node Pool (for challenge workloads) - 8 nodes autoscale to 10
+challenge_node_count        = 8
+challenge_node_machine_type = "e2-standard-4" # 4 vCPU each = 32 vCPU base, 40 vCPU max
 
 # Network Configuration
 network_name = "orbit-vpc"

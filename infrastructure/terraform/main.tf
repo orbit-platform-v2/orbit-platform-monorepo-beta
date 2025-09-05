@@ -209,7 +209,8 @@ resource "google_container_node_pool" "system_nodes" {
 
   node_config {
     preemptible  = false
-    machine_type = "e2-standard-2" # 2 vCPU, 8GB RAM per node
+    machine_type = var.system_node_machine_type # 4 vCPU, 16GB RAM per node
+    disk_size_gb = 100                          # Controlled disk size for quota management
 
     service_account = google_service_account.gke_nodes.email
     oauth_scopes = [
@@ -237,8 +238,8 @@ resource "google_container_node_pool" "system_nodes" {
   }
 
   autoscaling {
-    min_node_count = var.system_node_count
-    max_node_count = var.system_node_count + 1
+    min_node_count = var.system_auto_scaling_min
+    max_node_count = var.system_auto_scaling_max
   }
 
   management {
@@ -255,8 +256,9 @@ resource "google_container_node_pool" "challenge_nodes" {
   node_count = var.challenge_node_count
 
   node_config {
-    preemptible  = true            # Use preemptible for cost savings
-    machine_type = "e2-standard-4" # 4 vCPU, 16GB RAM per node
+    preemptible  = true                            # Use preemptible for cost savings
+    machine_type = var.challenge_node_machine_type # 4 vCPU, 16GB RAM per node
+    disk_size_gb = 50                              # Optimized disk size for quota management
 
     service_account = google_service_account.gke_nodes.email
     oauth_scopes = [
@@ -269,7 +271,7 @@ resource "google_container_node_pool" "challenge_nodes" {
 
     # Configure for challenge pod density
     # Each node can handle ~5 challenge pods (4 vCPU / 0.5 CPU per pod = 8, but leave headroom)
-    # 10 nodes × 5 pods = 50 challenge pods
+    # 8-10 nodes × 5 pods = 40-50 challenge pods
     metadata = {
       "max-pods-per-node" = "15" # Allow extra pods for system overhead
     }
@@ -285,8 +287,8 @@ resource "google_container_node_pool" "challenge_nodes" {
   }
 
   autoscaling {
-    min_node_count = var.challenge_node_count
-    max_node_count = var.challenge_node_count + 2 # Allow slight scaling
+    min_node_count = var.challenge_auto_scaling_min
+    max_node_count = var.challenge_auto_scaling_max
   }
 
   management {

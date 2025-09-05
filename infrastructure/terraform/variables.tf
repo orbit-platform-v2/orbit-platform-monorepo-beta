@@ -26,13 +26,13 @@ variable "environment" {
 variable "system_node_count" {
   description = "Number of nodes in the system node pool"
   type        = number
-  default     = 2
+  default     = 1
 }
 
 variable "challenge_node_count" {
   description = "Initial number of nodes in the challenge node pool"
   type        = number
-  default     = 10
+  default     = 8
 }
 
 variable "max_concurrent_users" {
@@ -132,7 +132,7 @@ variable "github_actions_sa_email" {
 variable "system_node_machine_type" {
   description = "Machine type for system node pool"
   type        = string
-  default     = "e2-standard-2"
+  default     = "e2-standard-4"
 }
 
 variable "challenge_node_machine_type" {
@@ -285,23 +285,23 @@ variable "subnet_name" {
 variable "system_auto_scaling_min" {
   description = "Minimum number of nodes in system pool for auto-scaling"
   type        = number
-  default     = 2
+  default     = 1
 }
 
 variable "system_auto_scaling_max" {
   description = "Maximum number of nodes in system pool for auto-scaling"
   type        = number
-  default     = 2
+  default     = 1
 }
 
 variable "challenge_auto_scaling_min" {
   description = "Minimum number of nodes in challenge pool for auto-scaling"
   type        = number
-  default     = 5
+  default     = 8
 }
 
 variable "challenge_auto_scaling_max" {
   description = "Maximum number of nodes in challenge pool for auto-scaling"
   type        = number
-  default     = 11
+  default     = 10
 }
