@@ -139,13 +139,13 @@ resource "google_logging_metric" "pod_creation_metric" {
   filter = "resource.type=\"k8s_pod\" AND labels.\"k8s-pod/app\"=\"challenge-pod\""
 
   metric_descriptor {
-    metric_kind  = "CUMULATIVE"
+    metric_kind  = "GAUGE"
     value_type   = "INT64"
     display_name = "Challenge Pod Creation Rate"
   }
 
   # Remove value_extractor for CUMULATIVE metrics
-  # value_extractor = "1"  # This line causes the error
+  value_extractor = "1"  # This line causes the error
 }
 
 # Storage bucket for backups and logs
