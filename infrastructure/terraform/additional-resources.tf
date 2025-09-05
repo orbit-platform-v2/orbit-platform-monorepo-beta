@@ -99,11 +99,9 @@ resource "google_artifact_registry_repository" "docker_repo" {
   }
 }
 
-# Service Account for Cloud Build
-resource "google_service_account" "cloudbuild_sa" {
-  account_id   = "orbit-cloudbuild"
-  display_name = "Cloud Build Service Account"
-  description  = "Service account for Cloud Build operations"
+# Service Account for Cloud Build - use existing service account
+data "google_service_account" "cloudbuild_sa" {
+  account_id = "orbit-cloudbuild"
 }
 
 # IAM bindings for Cloud Build
@@ -116,7 +114,7 @@ resource "google_project_iam_member" "cloudbuild_roles" {
 
   project = var.project_id
   role    = each.value
-  member  = "serviceAccount:${google_service_account.cloudbuild_sa.email}"
+  member  = "serviceAccount:${data.google_service_account.cloudbuild_sa.email}"
 }
 
 # Monitoring alerts and notifications
@@ -176,7 +174,7 @@ resource "google_storage_bucket" "platform_storage" {
 resource "google_storage_bucket_iam_member" "platform_storage_admin" {
   bucket = google_storage_bucket.platform_storage.name
   role   = "roles/storage.admin"
-  member = "serviceAccount:${google_service_account.gke_nodes.email}"
+  member = "serviceAccount:${data.google_service_account.gke_nodes.email}"
 }
 
 # Outputs for additional resources

@@ -212,7 +212,7 @@ resource "google_container_node_pool" "system_nodes" {
     machine_type = var.system_node_machine_type # 4 vCPU, 16GB RAM per node
     disk_size_gb = 100                          # Controlled disk size for quota management
 
-    service_account = google_service_account.gke_nodes.email
+    service_account = data.google_service_account.gke_nodes.email
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform"
     ]
@@ -260,7 +260,7 @@ resource "google_container_node_pool" "challenge_nodes" {
     machine_type = var.challenge_node_machine_type # 4 vCPU, 16GB RAM per node
     disk_size_gb = 50                              # Optimized disk size for quota management
 
-    service_account = google_service_account.gke_nodes.email
+    service_account = data.google_service_account.gke_nodes.email
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform"
     ]
@@ -297,10 +297,9 @@ resource "google_container_node_pool" "challenge_nodes" {
   }
 }
 
-# Service Account for GKE nodes
-resource "google_service_account" "gke_nodes" {
-  account_id   = "${var.cluster_name}-nodes"
-  display_name = "GKE Node Service Account"
+# Service Account for GKE nodes - use existing service account
+data "google_service_account" "gke_nodes" {
+  account_id = "${var.cluster_name}-nodes"
 }
 
 # IAM bindings for node service account
@@ -314,14 +313,14 @@ resource "google_project_iam_member" "gke_nodes" {
 
   project = var.project_id
   role    = each.value
-  member  = "serviceAccount:${google_service_account.gke_nodes.email}"
+  member  = "serviceAccount:${data.google_service_account.gke_nodes.email}"
 }
 
 # Container Registry IAM
 resource "google_project_iam_member" "gcr_access" {
   project = var.project_id
   role    = "roles/storage.objectViewer"
-  member  = "serviceAccount:${google_service_account.gke_nodes.email}"
+  member  = "serviceAccount:${data.google_service_account.gke_nodes.email}"
 }
 
 # Removed BigQuery IAM bindings (no longer needed without BigQuery dataset)
