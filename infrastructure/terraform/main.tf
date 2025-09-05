@@ -209,8 +209,8 @@ resource "google_container_node_pool" "system_nodes" {
 
   node_config {
     preemptible  = false
-    machine_type = var.system_node_machine_type # 4 vCPU, 16GB RAM per node
-    disk_size_gb = 100                          # Controlled disk size for quota management
+    machine_type = var.system_node_machine_type
+    disk_size_gb = 50              # Reduced disk size for system nodes
 
     service_account = data.google_service_account.gke_nodes.email
     oauth_scopes = [
@@ -221,11 +221,12 @@ resource "google_container_node_pool" "system_nodes" {
       role = "system"
     }
 
-    taint {
-      key    = "node-role"
-      value  = "system"
-      effect = "NO_SCHEDULE"
-    }
+    # Remove problematic taint that prevents system pods from scheduling
+    # taint {
+    #   key    = "node-role"
+    #   value  = "system"
+    #   effect = "NO_SCHEDULE"
+    # }
 
     workload_metadata_config {
       mode = "GKE_METADATA"
